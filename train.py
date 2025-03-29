@@ -1,0 +1,58 @@
+import os
+import torch
+import yaml
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.loggers import TensorBoardLogger
+import argparse
+
+from chessengine.dataloader import get_dataloaders
+from chessengine.engine_pl import ChessLightningModule
+from train_utils import load_config, setup_trainer
+
+# setup arg parser to get checkpoint path
+def parse_args():
+    parser = argparse.ArgumentParser(description="CHESS ENGINE Training")
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Path to a checkpoint file to resume training")
+    return parser.parse_args()
+
+def main():
+    # Load args
+    args = parse_args()
+    #config = load_config(args.config)
+
+    # Load YAML config
+    config_path = "engine_config.yaml"
+    config = load_config(config_path)
+
+    # Set random seed for reproducibility
+    pl.seed_everything(config.get("seed", 42))
+
+    # Get DataLoaders
+    data_path = "../chess_engine/data/positions_short3.pt"
+    train_loader, val_loader = get_dataloaders([data_path], config["data"])
+
+    # Initialize Model
+    model = ChessLightningModule(config)
+
+    # Setup Trainer
+    trainer, checkpoint_dir = setup_trainer(config["train"]) #, profiler="simple")
+
+    if args.checkpoint:
+        print(f"🔄 Resuming from checkpoint: {args.checkpoint}")
+        trainer.test(model, val_loader, ckpt_path=args.checkpoint)
+    else:
+        trainer.test(model, val_loader)  # Initial test with randomly initialized model
+
+    # Train (from scratch or from checkpoint)
+    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.checkpoint)
+
+    # Final test after training
+    trainer.test(model, val_loader)
+
+    # Print final checkpoint path
+    print(f"\n✅ Training Complete! Best checkpoint saved in: {checkpoint_dir}\n")
+
+if __name__ == "__main__":
+    main()
