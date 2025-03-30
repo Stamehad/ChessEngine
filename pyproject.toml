@@ -1,0 +1,13 @@
+[project]
+name = "chessengine"  # ← matches your folder name now
+version = "0.1.0"
+description = "Transformer-based chess engine"
+authors = [{ name = "Itamar", email = "you@example.com" }]
+dependencies = []
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["chessengine"]
