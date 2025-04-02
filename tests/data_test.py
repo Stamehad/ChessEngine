@@ -7,7 +7,7 @@ def test_chess_position_dataset():
     ## It checks that the dataset loads correctly and that the sample format is as expected
 
     ########## Load dataset ########
-    dataset = ChessPositionDataset(["../chess_engine/data/positions_short3.pt"])
+    dataset = ChessPositionDataset(["../chess_engine/data/test_positions.pt"])
 
     ########## Choose random sample ##########
     N = len(dataset)
@@ -19,11 +19,11 @@ def test_chess_position_dataset():
     
     ########## Check the board tensor ##########
     assert isinstance(x, torch.Tensor)
-    assert x.shape == (8, 8, 20)  # Updated shape for a chess board
+    assert x.shape == (8, 8, 21)  # Updated shape for a chess board
     
 
     ########## Check the label dictionary ##########
-    label_keys = ['eval', 'check', 'king_square', 'threat_target', 'move_target', 'terminal_flag']
+    label_keys = ['eval', 'check', 'king_square', 'threat_target', 'terminal_flag', 'legal_moves', 'true_index']
     for key in label_keys:
         assert key in labels
 
@@ -35,7 +35,13 @@ def test_chess_position_dataset():
     assert labels['king_square'].shape == (1,)  # Updated shape for king_square
     assert isinstance(labels['threat_target'], torch.Tensor)
     assert labels['threat_target'].shape == (64,)  # Updated shape for threat_target
-    assert isinstance(labels['move_target'], torch.Tensor)
-    assert labels['move_target'].shape == (64,)  # Updated shape for move_target
+    # assert isinstance(labels['move_target'], torch.Tensor)
+    # assert labels['move_target'].shape == (64,)  # Updated shape for move_target
     assert isinstance(labels['terminal_flag'], torch.Tensor)
     assert labels['terminal_flag'].shape == (1,)  # Updated shape for terminal_flag
+    assert isinstance(labels['legal_moves'], torch.Tensor)
+    assert labels['legal_moves'].shape[0] == 64  # Updated shape for legal_moves
+    # assert labels['legal_moves'].shape[1] > 0  # Updated shape for legal_moves
+    assert isinstance(labels['true_index'], torch.Tensor)
+    assert labels['true_index'].shape == (1,)  # Updated shape for true_index
+    assert labels['true_index'].item() >= 0  # Ensure true_index is non-negative

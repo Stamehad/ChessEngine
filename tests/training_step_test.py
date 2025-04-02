@@ -10,18 +10,19 @@ def test_training_step_runs():
         config = yaml.load(file, Loader=yaml.FullLoader)
 
     ########## Initialize dataset and model ##########
-    dataset = ChessPositionDataset(["../chess_engine/data/positions_short3.pt"])
+    dataset = ChessPositionDataset(["../chess_engine/data/test_positions.pt"])
     model = ChessLightningModule(config)
     
     ########## Random sample ##########
     N = len(dataset)
     idx = torch.randint(0, N, (1,)).item()
     batch = dataset[idx]
-    x, labels = batch  # (8, 8, 20), Dictionary of labels
+    x, labels = batch  # (8, 8, 21), Dictionary of labels
 
     ########## Add batch dim ##########
     x = x.unsqueeze(0)  
     labels = {k: v.unsqueeze(0) for k, v in labels.items()}
+    labels["true_index"] = labels["true_index"].squeeze(-1)
     batch = (x, labels)
     
     loss = model.training_step(batch, batch_idx=0)

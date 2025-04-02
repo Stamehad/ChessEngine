@@ -1,8 +1,10 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from chessengine.evalhead import EvalHead
 from chessengine.incheckhead import InCheckHead
 from chessengine.threathead import ThreatHead
+from chessengine.utils import masked_one_hot
 
 class EvalLoss(nn.Module):
     def __init__(self, config):
@@ -22,6 +24,12 @@ class EvalLoss(nn.Module):
         return loss, preds
     
 class InCheckLoss(nn.Module):
+    """
+    Computes the binary cross-entropy loss for the in-check prediction.
+    I.e. given a position the head predicts whether the king will be in check after a move.
+    When no ground truth move is available, the loss is ignored.
+    The predition is obtained from the king's square.
+    """
     def __init__(self, config):
         super().__init__()
         self.head = InCheckHead(config['model'])
@@ -38,10 +46,17 @@ class InCheckLoss(nn.Module):
         index = king_square.unsqueeze(-1).expand(-1, -1, board_x.size(-1))  # (B, 1, H)
         king_repr = board_x.gather(dim=1, index=index)  # (B, 1, H)
 
-        logits = self.head(king_repr)  # (B, 1)
-        loss = self.loss_fn(logits, check)
+        logits = self.head(king_repr).view(-1)  # (B,)
+        check = check.view(-1)  # (B,)
 
-        return loss, logits
+        # This removes the -100 entries from the loss
+        valid = (check >= 0.0) & (check <= 1.0)  # (B,)
+    
+        if valid.sum() == 0:
+            return torch.tensor(0.0, device=x.device), logits.view(-1, 1)  # safe fallback
+
+        loss = self.loss_fn(logits[valid], check[valid])
+        return loss, logits.view(-1, 1)
     
 class ThreatLoss(nn.Module):
     """
@@ -58,28 +73,48 @@ class ThreatLoss(nn.Module):
         x: transformer output (B, 65, H)
         target: Tensor (B, 64) with 0 or 1 for each square and -100 to ignore
         """
+
         logits = self.head(x)  # (B, 64, 2)
         loss = self.loss_fn(logits.view(-1, 2), target.view(-1))  # (B*64)
         return loss, logits
-    
-class MoveLoss(nn.Module):
-    """
-    Computes cross-entropy loss for changed squares after a move.
-    Expects predictions from ChessEngine and sparse labels with -100 to ignore.
-    """
+        
+class LegalMoveLoss(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
 
-    def forward(self, move_pred, target, move_weight=None):
+    def forward(self, move_pred, legal_moves, true_index, move_weight=None):
         """
-        move_pred: Tensor (B, 64, 7) — logits over move classes per square
-        target: LongTensor (B, 64) — each square has label in [0, 6] or -100 to ignore
-        move_weight: FloatTensor (B, 1) — optional, multiplies move loss per sample
+        move_pred: (B, 64, 7)
+        legal_moves: (B, 64, L) — entries in [0–6] or -100
+        true_index: (B,) — index of correct move among the L legal moves
+        move_weight: (B, 1) or (B,) — optional scalar weight for each sample
         """
-        B, S, C = move_pred.shape  # B=batch, S=64 squares, C=7 classes
-        loss = F.cross_entropy(move_pred.view(B * S, C), target.view(B * S), reduction='none') # (B*S)
+        # One-hot encode with zero vector for -100 entries
+        legal_moves_one_hot = masked_one_hot(legal_moves, num_classes=7, mask_value=-100)  # (B, 64, L, 7)
+
+        # If for l in [0, L-1] all squares are -100, then l does not represent a legal move and should be ignored
+        legal_moves_mask = (legal_moves != -100).any(dim=1)  # (B, L)
+
+        # Expand prediction to align
+        move_pred = move_pred.unsqueeze(2)  # (B, 64, 1, 7)
+
+        # Multiply and sum over piece type dimension to select correct logit
+        move_logits = (move_pred * legal_moves_one_hot).sum(dim=-1)  # (B, 64, L)
+
+        # Average over changed squares
+        mask = (legal_moves != -100)  # (B, 64, L)
+        move_logits = move_logits.sum(dim=1) / mask.sum(dim=1).clamp(min=1)  # (B, L)
+
+        # (B, L) — set logits of illegal moves to -inf
+        masked_logits = move_logits.masked_fill(~legal_moves_mask, float('-inf'))
+
+        # Cross-entropy loss: ignore masked-out (illegal) moves
+        ce_loss = F.cross_entropy(masked_logits, true_index, reduction='none', ignore_index=-1)  # (B,)
+        
+        # Apply weights if provided
         if move_weight is not None:
-            loss = loss.view(B, S) * move_weight
-            
-        return loss.mean() 
+            move_weight = move_weight.view(-1)  # ensure shape (B,)
+            ce_loss = ce_loss * move_weight
+
+        loss = ce_loss.mean()
+        return loss, move_logits

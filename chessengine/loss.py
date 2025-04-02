@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from chessengine.loss_heads import EvalLoss, InCheckLoss, ThreatLoss, MoveLoss
+from chessengine.loss_heads import EvalLoss, InCheckLoss, ThreatLoss, LegalMoveLoss
 
 class Loss(nn.Module):
     """
@@ -13,7 +13,7 @@ class Loss(nn.Module):
         self.eval_loss = EvalLoss(config)
         self.incheck_loss = InCheckLoss(config)
         self.threat_loss = ThreatLoss(config)
-        self.move_loss = MoveLoss(config)
+        self.move_loss = LegalMoveLoss(config)
 
         # Default weights if not specified in config
         loss_config = config['loss']
@@ -36,10 +36,11 @@ class Loss(nn.Module):
             - 'check': (B, 1)
             - 'king_square': (B, 1)
             - 'threat_target': (B, 64) (-100 for masked squares)
-            - 'move_weight': (B,) — optional, multiplies move loss per sample
+            - 'terminal_flag': (B, 1)
+            - 'legal_moves': (B,64,L) 
+            - 'true_index': (B, ) 
         """
         total = 0.0
-        loss_dict = {}
 
         # Optionally weight moves based on game result
         if self.USE_MOVE_WEIGHT:
@@ -50,7 +51,7 @@ class Loss(nn.Module):
         loss_eval, _ = self.eval_loss(x, labels["eval"])
         loss_check, _ = self.incheck_loss(x, labels["king_square"], labels["check"])
         loss_threat, _ = self.threat_loss(x, labels["threat_target"])
-        loss_move = self.move_loss(move_pred, labels["move_target"], move_weight) 
+        loss_move, move_logits = self.move_loss(move_pred, labels["legal_moves"], labels["true_index"], move_weight) 
 
         total += (
             self.weights['eval'] * loss_eval + 
@@ -59,9 +60,11 @@ class Loss(nn.Module):
             self.weights['move'] * loss_move
         )
 
-        loss_dict["eval"] = loss_eval.item()
-        loss_dict["incheck"] = loss_check.item()
-        loss_dict["threat"] = loss_threat.item()
-        loss_dict["move"] = loss_move.item()
+        loss_dict = {
+            "eval": loss_eval.item(),
+            "incheck": loss_check.item(),
+            "threat": loss_threat.item(),
+            "move": loss_move.item(),
+        }
 
-        return total, loss_dict
+        return total, loss_dict, move_logits # (1,), (1,), (B, L)

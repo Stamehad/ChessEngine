@@ -1,7 +1,7 @@
 import yaml
 from chessengine.engine_pl import ChessLightningModule
 from chessengine.dataclass import ChessPositionDataset
-from torch.utils.data import DataLoader
+from chessengine.dataloader import get_dataloaders
 import pytorch_lightning as pl
 
 
@@ -12,10 +12,9 @@ def test_lightning_train_loop():
         config = yaml.load(file, Loader=yaml.FullLoader)
 
     ########## Initialize dataset and model ##########
-    dataset = ChessPositionDataset(["../chess_engine/data/positions_short3.pt"])
+    #dataset = ChessPositionDataset(["../chess_engine/data/test_positions.pt"])
+    train_loader, val_loader = get_dataloaders(["../chess_engine/data/test_positions.pt"], config["data"])
     model = ChessLightningModule(config)
     
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=4, persistent_workers=True)
-    val_dataloader = DataLoader(dataset, batch_size=2, shuffle=False, num_workers=4, persistent_workers=True)
     trainer = pl.Trainer(fast_dev_run=True)
-    trainer.fit(model, dataloader, val_dataloader)
+    trainer.fit(model, train_loader, val_loader)

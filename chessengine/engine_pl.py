@@ -16,59 +16,52 @@ class ChessLightningModule(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def compute_move_accuracy(self, move_pred, move_target):
-        """
-        Computes the accuracy of the move prediction.
-        Args:
-            move_pred (Tensor): The predicted moves from the model. (B, 64, 7)
-            move_target (Tensor): The ground truth moves. (B, 64) with -100 masking
-        Returns:
-            accuracy (float): The accuracy of the move prediction between 0 and 1.
-        """
-        B, S, C = move_pred.shape
-        pred_labels = move_pred.argmax(dim=-1)  # (B, 64)
-        mask = (move_target != -100)
-        correct = (pred_labels == move_target) & mask
-        accuracy = correct.sum().float() / mask.sum().clamp(min=1)
-        return accuracy.item()
-
     def training_step(self, batch, batch_idx):
         x, labels = batch  # Assuming batch = (input_tensor, label_dict)
         x_out, move_pred = self.model(x)
-        total_loss, loss_dict = self.loss_module(x_out, move_pred, labels)
+        total_loss, loss_dict, move_logits = self.loss_module(x_out, move_pred, labels)
 
         self.log("train/loss_total", total_loss, prog_bar=True)
         for name, val in loss_dict.items():
             self.log(f"train/loss_{name}", val, prog_bar=(name == "move"))
 
-        acc = self.compute_move_accuracy(move_pred, labels["move_target"])
+        acc = self.compute_move_accuracy(move_logits, labels["true_index"])
         self.log("train/move_accuracy", acc, prog_bar=True)
+
+        avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
+        self.log("train/move_true_prob", avg_prob, prog_bar=True)
 
         return total_loss
 
     def validation_step(self, batch, batch_idx):
         x, labels = batch
         x_out, move_pred = self.model(x)
-        total_loss, loss_dict = self.loss_module(x_out, move_pred, labels)
+        total_loss, loss_dict, move_logits = self.loss_module(x_out, move_pred, labels)
 
         self.log("val/loss_total", total_loss, prog_bar=True)
         for name, val in loss_dict.items():
             self.log(f"val/loss_{name}", val, prog_bar=(name == "move"))
 
-        acc = self.compute_move_accuracy(move_pred, labels["move_target"])
+        acc = self.compute_move_accuracy(move_logits, labels["true_index"])
         self.log("val/move_accuracy", acc, prog_bar=True)
+
+        avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
+        self.log("train/move_true_prob", avg_prob, prog_bar=False)
 
     def test_step(self, batch, batch_idx):
         x, labels = batch
         x_out, move_pred = self.model(x)
-        total_loss, loss_dict = self.loss_module(x_out, move_pred, labels)
+        total_loss, loss_dict, move_logits = self.loss_module(x_out, move_pred, labels)
 
         self.log("test/loss_total", total_loss, prog_bar=True)
         for name, val in loss_dict.items():
             self.log(f"test/loss_{name}", val, prog_bar=(name == "move"))
 
-        acc = self.compute_move_accuracy(move_pred, labels["move_target"])
+        acc = self.compute_move_accuracy(move_logits, labels["true_index"])
         self.log("test/move_accuracy", acc, prog_bar=True)
+
+        avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
+        self.log("train/move_true_prob", avg_prob, prog_bar=False)
 
     def configure_optimizers(self):
 
@@ -81,3 +74,35 @@ class ChessLightningModule(pl.LightningModule):
         optimizer = AdamW(self.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
+    
+    def compute_move_accuracy(self, move_logits, true_index):
+        """
+        Computes the accuracy of the move prediction.
+        Args:
+            move_logits (Tensor): logits for all legal moves (B, L)
+            true_index (Tensor): index of ground truth move (B,)
+        Returns:
+            accuracy (float): The accuracy of the move prediction in percentage.
+        """
+        pred_idx = move_logits.argmax(dim=-1)  # (B,)
+        correct = (pred_idx == true_index)  # (B,)
+        accuracy = 100 * correct.sum().float() / (true_index != -1).sum().float() 
+        return accuracy.item()
+    
+    def compute_true_move_prob(self, move_logits, true_index):
+        """
+        Computes the average softmax probability assigned to the correct move.
+        Args:
+            move_logits (Tensor): logits for all legal moves (B, L)
+            true_index (Tensor): index of ground truth move (B,)
+        Returns:
+            avg_prob (float): Average predicted probability assigned to the correct move.
+        """
+        mask = (true_index != -1)                               # (B,)
+        move_logits = move_logits[mask]                         # (B', L)
+        true_index = true_index[mask]                           # (B',)
+
+        probs = torch.softmax(move_logits, dim=-1)              # (B', L)
+        true_probs = probs.gather(1, true_index.unsqueeze(1))   # (B', 1)
+        avg_prob = true_probs.mean().item()                     # Scalar
+        return avg_prob
