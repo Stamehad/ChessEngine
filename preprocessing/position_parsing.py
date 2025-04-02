@@ -38,6 +38,7 @@ import io
 # | `threat_target`  | (64,)      | Labels for newly threatened opponent pieces (-100 or 0 or 1) |
 # | `terminal_flag`  | (1,)       | Game state (0=active, 1=stalemate, 2=checkmate)              |
 # | `legal_moves`    | (64, L)    | Like move_target (=ground truth) but for all L legal moves   |
+# | `true_index`     | (1,)       | Index of the ground truth move in legal moves                |
 ##################################################################################################
 ##################################################################################################
 
@@ -167,10 +168,11 @@ def compute_move_target(board, move):
 
     return move_target
 
-def generate_legal_move_tensor(board: chess.Board):
+def generate_legal_move_tensor(board: chess.Board, ground_truth_move: chess.Move):
     legal_move_tensors = []
+    true_index = -1
 
-    for move in board.legal_moves:
+    for index, move in enumerate(board.legal_moves):
         move_tensor = torch.full((64,), -100, dtype=torch.int8)
 
         # From square becomes empty
@@ -204,10 +206,71 @@ def generate_legal_move_tensor(board: chess.Board):
 
         legal_move_tensors.append(move_tensor)
 
-    if len(legal_move_tensors) == 0:
-        return torch.empty((64, 0), dtype=torch.int8)
+        if move == ground_truth_move:
+            true_index = index
 
-    return torch.stack(legal_move_tensors, dim=1)  # (64, L)
+    if len(legal_move_tensors) == 0:
+        return torch.empty((64, 0), dtype=torch.int8), -1
+
+    return torch.stack(legal_move_tensors, dim=1), true_index  # (64, L)
+
+def parse_game_positions(game: chess.pgn.Game, eval_val: int):
+    """Parses a single game and returns a list of positions"""
+    game_positions = []
+
+    # Initialize the board
+    board = game.board()
+
+    for move in game.mainline_moves():
+        board_tensor = encode_board(board)  # snapshot before move
+
+        # Game termination flag
+        terminal_flag = 2 if board.is_checkmate() else 1 if board.is_stalemate() else 0
+
+        # Supervision targets
+        legal_moves_tensor, true_index = generate_legal_move_tensor(board, move)
+        move_target = compute_move_target(board, move)
+
+        # Apply the move to evaluate result
+        board.push(move)
+
+        king_sq = board.king(not board.turn)
+        is_check = board.is_check()
+        threat_target = compute_threat_target(board)
+
+        sample = {
+            "board": board_tensor,
+            "eval": torch.tensor([eval_val], dtype=torch.uint8),
+            "move_target": move_target,
+            "king_square": torch.tensor([king_sq], dtype=torch.uint8),
+            "check": torch.tensor([int(is_check)], dtype=torch.int8),
+            "threat_target": threat_target,
+            "terminal_flag": torch.tensor([terminal_flag], dtype=torch.uint8),
+            "legal_moves": legal_moves_tensor,
+            "true_index": torch.tensor([true_index], dtype=torch.int64),
+        }
+        game_positions.append(sample)
+
+    # Capture final board position after the last move (no move to push)
+    # true_index is set to -1 (no ground truth move)
+    board_tensor = encode_board(board)
+    legal_moves_tensor, true_index = generate_legal_move_tensor(board, None)
+    terminal_flag = 2 if board.is_checkmate() else 1 if board.is_stalemate() else 0
+    king_sq = board.king(not board.turn)
+
+    final_sample = {
+        "board": board_tensor,
+        "eval": torch.tensor([eval_val], dtype=torch.uint8),
+        "move_target": torch.full((64,), -100, dtype=torch.int8),
+        "king_square": torch.tensor([king_sq], dtype=torch.uint8),
+        "check": torch.tensor([-100], dtype=torch.uint8),
+        "threat_target": torch.full((64,), -100, dtype=torch.int8),
+        "terminal_flag": torch.tensor([terminal_flag], dtype=torch.uint8),
+        "legal_moves": legal_moves_tensor,
+        "true_index": torch.tensor([true_index], dtype=torch.int64),
+    }
+    game_positions.append(final_sample)
+    return game_positions
 
 def parse_games(jsonl_path, output_path, max_games=None):
     data = []
@@ -219,57 +282,9 @@ def parse_games(jsonl_path, output_path, max_games=None):
             eval_val = result_to_eval(result)
 
             game = chess.pgn.read_game(io.StringIO(pgn))
-            board = game.board()
-
-            for move in game.mainline_moves():
-                board_tensor = encode_board(board)  # snapshot before move
-
-                # Game termination flag
-                terminal_flag = 2 if board.is_checkmate() else 1 if board.is_stalemate() else 0
-
-                # Supervision targets
-                legal_moves_tensor = generate_legal_move_tensor(board)
-                move_target = compute_move_target(board, move)
-
-                # Apply the move to evaluate result
-                board.push(move)
-
-                king_sq = board.king(not board.turn)
-                is_check = board.is_check()
-                threat_target = compute_threat_target(board)
-
-                sample = {
-                    "board": board_tensor,
-                    "eval": torch.tensor([eval_val], dtype=torch.uint8),
-                    "move_target": move_target,
-                    "king_square": torch.tensor([king_sq], dtype=torch.uint8),
-                    "check": torch.tensor([int(is_check)], dtype=torch.uint8),
-                    "threat_target": threat_target,
-                    "terminal_flag": torch.tensor([terminal_flag], dtype=torch.uint8),
-                    "legal_moves": legal_moves_tensor,
-                }
-                data.append(sample)
-
-            # Capture final board state after the last move
-            board_tensor = encode_board(board)
-            legal_moves_tensor = generate_legal_move_tensor(board)
-            move_target = torch.full((64,), -100, dtype=torch.int8)
-            terminal_flag = 2 if board.is_checkmate() else 1 if board.is_stalemate() else 0
-            king_sq = board.king(not board.turn)
-            is_check = board.is_check()
-            threat_target = compute_threat_target(board)
-
-            final_sample = {
-                "board": board_tensor,
-                "eval": torch.tensor([eval_val], dtype=torch.uint8),
-                "move_target": move_target,
-                "king_square": torch.tensor([king_sq], dtype=torch.uint8),
-                "check": torch.tensor([int(is_check)], dtype=torch.uint8),
-                "threat_target": threat_target,
-                "terminal_flag": torch.tensor([terminal_flag], dtype=torch.uint8),
-                "legal_moves": legal_moves_tensor,
-            }
-            data.append(final_sample)
+            
+            game_positions = parse_game_positions(game, eval_val)
+            data.extend(game_positions)
 
             if max_games and len(data) >= max_games:
                 break
