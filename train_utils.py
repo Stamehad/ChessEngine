@@ -23,6 +23,7 @@ def load_config(config_path):
 def setup_trainer(config, trial_mode=False, profiler=None):
     """Creates a Lightning Trainer with trial mode support and prints checkpoint path."""
 
+    print("\n🔹 Setting up Trainer...")
     # Logger
     experiment_name = f"CHESSENGINE_{config['max_epochs']}epochs"
     logger = TensorBoardLogger("lightning_logs", name=experiment_name)

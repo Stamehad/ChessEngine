@@ -30,10 +30,11 @@ def main():
     pl.seed_everything(config.get("seed", 42))
 
     # Get DataLoaders
-    data_path = "../chess_engine/data/positions_short3.pt"
-    train_loader, val_loader = get_dataloaders([data_path], config["data"])
+    data_paths = ["../chess_engine/data/shards300_small/positions2.pt", "../chess_engine/data/shards300_small/positions3.pt"]
+    train_loader, val_loader = get_dataloaders(data_paths, config["data"])
 
     # Initialize Model
+    print("Initializing model...")
     model = ChessLightningModule(config)
 
     # Setup Trainer
