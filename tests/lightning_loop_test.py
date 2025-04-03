@@ -13,7 +13,7 @@ def test_lightning_train_loop():
 
     ########## Initialize dataset and model ##########
     #dataset = ChessPositionDataset(["../chess_engine/data/test_positions.pt"])
-    train_loader, val_loader = get_dataloaders(["../chess_engine/data/test_positions.pt"], config["data"])
+    train_loader, val_loader = get_dataloaders(["../chess_engine/data/test_positions.pt"], config)
     model = ChessLightningModule(config)
     
     trainer = pl.Trainer(fast_dev_run=True)

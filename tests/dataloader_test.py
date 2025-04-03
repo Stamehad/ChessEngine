@@ -8,15 +8,15 @@ def test_dataloader():
     with open("engine_config.yaml", "r") as file:
         config = yaml.load(file, Loader=yaml.FullLoader)
 
-    B = config['data']['batch_size']
+    B = config['dataloader']['batch_size']
     F = config['model']['feature_dim']
 
-    config["data"]["num_workers"] = 0
-    config["data"]["persistent_workers"] = False
+    config["dataloader"]["num_workers"] = 0
+    config["dataloader"]["persistent_workers"] = False
 
 
     ########## Initialize dataset and model ##########
-    train_loader, val_loader = get_dataloaders(["../chess_engine/data/test_positions.pt"], config["data"])
+    train_loader, val_loader = get_dataloaders(["../chess_engine/data/test_positions.pt"], config)
 
     # Test train loader
     for batch in train_loader:

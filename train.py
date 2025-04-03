@@ -1,12 +1,8 @@
-import os
-import torch
-import yaml
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning.loggers import TensorBoardLogger
 import argparse
 
-from chessengine.dataloader import get_dataloaders
+#from chessengine.dataloader import get_dataloaders
+from chessengine.datamodule import ChessDataModule
 from chessengine.engine_pl import ChessLightningModule
 from train_utils import load_config, setup_trainer
 
@@ -30,9 +26,17 @@ def main():
     pl.seed_everything(config.get("seed", 42))
 
     # Get DataLoaders
-    data_paths = ["../chess_engine/data/shards300_small/positions2.pt", "../chess_engine/data/shards300_small/positions3.pt"]
-    train_loader, val_loader = get_dataloaders(data_paths, config["data"])
+    data_paths = ["../chess_engine/data/shards300_small/positions0.pt", "../chess_engine/data/shards300_small/positions4.pt"]
+    data_paths = ["../chess_engine/data/test_positions.pt"]
+    #train_loader, val_loader = get_dataloaders(data_paths, config)
 
+    dm = ChessDataModule(config, data_paths)
+    dm.setup()
+    train_loader = dm.train_dataloader()
+    val_loader = dm.val_dataloader()
+    config["train"]["T_max"] = len(train_loader) * config["train"]["max_epochs"]
+    print(f"Total training steps: {config['train']['T_max']}")
+    
     # Initialize Model
     print("Initializing model...")
     model = ChessLightningModule(config)
@@ -40,11 +44,11 @@ def main():
     # Setup Trainer
     trainer, checkpoint_dir = setup_trainer(config["train"]) #, profiler="simple")
 
-    if args.checkpoint:
-        print(f"🔄 Resuming from checkpoint: {args.checkpoint}")
-        trainer.test(model, val_loader, ckpt_path=args.checkpoint)
-    else:
-        trainer.test(model, val_loader)  # Initial test with randomly initialized model
+    # if args.checkpoint:
+    #     print(f"🔄 Resuming from checkpoint: {args.checkpoint}")
+    #     trainer.test(model, val_loader, ckpt_path=args.checkpoint)
+    # else:
+    #     trainer.test(model, val_loader)  # Initial test with randomly initialized model
 
     # Train (from scratch or from checkpoint)
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.checkpoint)

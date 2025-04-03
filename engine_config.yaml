@@ -1,10 +1,14 @@
 seed:
     42
-data:
-    "val_split": 0.1
+data_split:
+    0.1
+
+dataloader:
     "batch_size": 64
     "num_workers": 2
     "persistent_workers": True
+    #"pin_memory": False
+    #"prefetch_factor": None
 
 model:
     "feature_dim": 21
@@ -27,5 +31,5 @@ train:
     'lr': 0.0001
     'weight_decay': 0.01
     'T_max': 2
-    'max_epochs': 4
-    #'accelerator': 'mps'
+    'max_epochs': 2
+    #'device': 'mps'

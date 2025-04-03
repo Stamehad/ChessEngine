@@ -48,10 +48,9 @@ def get_dataloaders(data_paths, config):
 
     #################### Unpack config ###################
     seed = config.get('seed', 42)
-    batch_size = config['batch_size']
-    num_workers = config.get('num_workers', 4)
-    val_fraction = config.get('val_split', 0.1)
-    persistent_workers = config.get('persistent_workers', True)
+    dataloader_config = config['dataloader']
+    batch_size = dataloader_config['batch_size']
+    val_fraction = config.get('data_split', 0.1)
 
     ################### Create dataset ###################
     print(f"Loading dataset from: {data_paths}")
@@ -72,24 +71,20 @@ def get_dataloaders(data_paths, config):
     #print(f"Preparing sampler...")
     #train_sampler = ShardSampler(train_set, shuffle_within_shard=True, shuffle_shards=True)
 
-    print(f'Preparing dataloaders with {num_workers} workers...')
+    print(f"Preparing dataloaders with {dataloader_config['num_workers']} workers...")
     train_loader = DataLoader(train_set, 
-                            batch_size=batch_size, 
+                            **dataloader_config,
                             shuffle=True,
                             #sampler=train_sampler, 
                             collate_fn=collate_fn, 
-                            num_workers=num_workers, 
-                            persistent_workers=persistent_workers
     )
 
     #val_sampler = ShardSampler(val_set, shuffle_within_shard=False, shuffle_shards=False)
     val_loader = DataLoader(val_set, 
-                            batch_size=batch_size, 
+                            **dataloader_config,
                             shuffle=False, 
                             #sampler=val_sampler,
                             collate_fn=collate_fn, 
-                            num_workers=num_workers, 
-                            persistent_workers=persistent_workers
     )
 
     return train_loader, val_loader

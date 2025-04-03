@@ -8,7 +8,7 @@ class ChessPositionDataset(torch.utils.data.Dataset):
         """
         self.samples = []
         for path in data_paths:
-            data = torch.load(path, weights_only=True)
+            data = torch.load(path)
             self.samples.extend(data)
 
     def __len__(self):
