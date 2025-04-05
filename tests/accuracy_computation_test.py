@@ -1,6 +1,6 @@
 import yaml
-from chessengine.engine_pl import ChessLightningModule
-from chessengine.dataclass import ChessPositionDataset
+from chessengine.model.engine_pl import ChessLightningModule
+from chessengine.model.dataclass import ChessPositionDataset
 import torch
 
 def test_move_accuracy_computation():

@@ -1,13 +1,17 @@
 import pytest
 import torch
-from chessengine.dataclass import ChessPositionDataset
+from chessengine.model.dataclass import ChessPositionDataset
+from dotenv import load_dotenv
+import os
+load_dotenv()
+TEST_DATASET = os.getenv("TEST_DATASET")
 
 def test_chess_position_dataset():
     ## This test checks the ChessPositionDataset class
     ## It checks that the dataset loads correctly and that the sample format is as expected
 
     ########## Load dataset ########
-    dataset = ChessPositionDataset(["../chess_engine/data/test_positions.pt"])
+    dataset = ChessPositionDataset([TEST_DATASET])
 
     ########## Choose random sample ##########
     N = len(dataset)

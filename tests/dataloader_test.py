@@ -1,7 +1,12 @@
 import pytest
 import torch
 import yaml
-from chessengine.dataloader import get_dataloaders
+from chessengine.model.dataloader import get_dataloaders
+
+from dotenv import load_dotenv
+import os
+load_dotenv()
+TEST_DATASET = os.getenv("TEST_DATASET")
 
 def test_dataloader():
     ########## Get config from YAML ##########
@@ -16,7 +21,7 @@ def test_dataloader():
 
 
     ########## Initialize dataset and model ##########
-    train_loader, val_loader = get_dataloaders(["../chess_engine/data/test_positions.pt"], config)
+    train_loader, val_loader = get_dataloaders([TEST_DATASET], config)
 
     # Test train loader
     for batch in train_loader:

@@ -1,5 +1,5 @@
 import torch
-from chessengine.engine import ChessEngine
+from chessengine.model.engine import ChessEngine
 import yaml
 
 def test_chess_engine_output_shapes():

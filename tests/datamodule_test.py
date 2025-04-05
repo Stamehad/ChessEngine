@@ -1,13 +1,15 @@
-from chessengine.datamodule import ChessDataModule
+from chessengine.model.datamodule import ChessDataModule
 import yaml
+from dotenv import load_dotenv
+import os
+load_dotenv()
+TEST_DATASET = os.getenv("TEST_DATASET")
 
 def test_chess_data_module():
     with open("engine_config.yaml", "r") as f:
         config = yaml.safe_load(f)
-
-    data_paths = ["data/test_positions.pt"]
     
-    dm = ChessDataModule(config, data_paths)
+    dm = ChessDataModule(config, [TEST_DATASET])
     dm.setup()
 
     train_loader = dm.train_dataloader()

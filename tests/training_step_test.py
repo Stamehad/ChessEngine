@@ -1,7 +1,12 @@
 import yaml
-from chessengine.engine_pl import ChessLightningModule
-from chessengine.dataclass import ChessPositionDataset
+from chessengine.model.engine_pl import ChessLightningModule
+from chessengine.model.dataclass import ChessPositionDataset
 import torch
+
+from dotenv import load_dotenv
+import os
+load_dotenv()
+TEST_DATASET = os.getenv("TEST_DATASET")
 
 def test_training_step_runs():
 
@@ -10,7 +15,7 @@ def test_training_step_runs():
         config = yaml.load(file, Loader=yaml.FullLoader)
 
     ########## Initialize dataset and model ##########
-    dataset = ChessPositionDataset(["../chess_engine/data/test_positions.pt"])
+    dataset = ChessPositionDataset([TEST_DATASET])
     model = ChessLightningModule(config)
     
     ########## Random sample ##########

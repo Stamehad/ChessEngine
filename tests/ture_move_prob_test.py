@@ -1,6 +1,6 @@
 import torch
 import yaml
-from chessengine.engine_pl import ChessLightningModule
+from chessengine.model.engine_pl import ChessLightningModule
 
 def test_true_move_prob_metric():
     with open("engine_config.yaml", "r") as file:
