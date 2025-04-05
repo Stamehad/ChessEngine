@@ -2,16 +2,18 @@ import pytorch_lightning as pl
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch
-from chessengine.engine import ChessEngine
-from chessengine.loss import Loss
+from chessengine.model.engine import ChessEngine
+from chessengine.model.loss import Loss
+from chessengine.model.utils import flatten_dict
 
 class ChessLightningModule(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
-        self.save_hyperparameters(config)
+        self.save_hyperparameters(flatten_dict(config))
         self.model = ChessEngine(config["model"])
         self.loss_module = Loss(config)
         self.loss_config = config["train"]
+        self.lr = self.loss_config["lr"]
         
     def forward(self, x):
         return self.model(x)

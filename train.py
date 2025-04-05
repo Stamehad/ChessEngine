@@ -2,8 +2,8 @@ import pytorch_lightning as pl
 import argparse
 
 #from chessengine.dataloader import get_dataloaders
-from chessengine.datamodule import ChessDataModule
-from chessengine.engine_pl import ChessLightningModule
+from chessengine.model.datamodule import ChessDataModule
+from chessengine.model.engine_pl import ChessLightningModule
 from train_utils import load_config, setup_trainer
 
 # setup arg parser to get checkpoint path

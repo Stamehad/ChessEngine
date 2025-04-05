@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import random_split, DataLoader
-from chessengine.dataclass import ChessPositionDataset
-from chessengine.sampler import ShardSampler
+from chessengine.model.dataclass import ChessPositionDataset
+from chessengine.model.sampler import ShardSampler
 
 def collate_fn(batch):
     boards = []

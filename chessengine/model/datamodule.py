@@ -1,8 +1,8 @@
 import torch
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, random_split
-from chessengine.dataclass import ChessPositionDataset
-from chessengine.dataloader import collate_fn
+from chessengine.model.dataclass import ChessPositionDataset
+from chessengine.model.dataloader import collate_fn
 
 class ChessDataModule(pl.LightningDataModule):
     def __init__(self, config, data_paths):

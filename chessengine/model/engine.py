@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from chessengine.emb import BoardEmbedding
-from chessengine.attn import TransformerBlock
-from chessengine.movehead import MoveHead
+from chessengine.model.emb import BoardEmbedding
+from chessengine.model.attn import TransformerBlock
+from chessengine.model.movehead import MoveHead
 
 class RecycleEmbedding(nn.Module):
     def __init__(self, dim):

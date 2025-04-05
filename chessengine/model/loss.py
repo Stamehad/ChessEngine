@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from chessengine.loss_heads import EvalLoss, InCheckLoss, ThreatLoss, LegalMoveLoss
+from chessengine.model.loss_heads import EvalLoss, InCheckLoss, ThreatLoss, LegalMoveLoss
 
 class Loss(nn.Module):
     """

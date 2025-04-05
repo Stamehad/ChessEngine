@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from chessengine.evalhead import EvalHead
-from chessengine.incheckhead import InCheckHead
-from chessengine.threathead import ThreatHead
-from chessengine.utils import masked_one_hot
+from chessengine.model.evalhead import EvalHead
+from chessengine.model.incheckhead import InCheckHead
+from chessengine.model.threathead import ThreatHead
+from chessengine.model.utils import masked_one_hot
 
 class EvalLoss(nn.Module):
     def __init__(self, config):
@@ -117,4 +117,4 @@ class LegalMoveLoss(nn.Module):
             ce_loss = ce_loss * move_weight
 
         loss = ce_loss.mean()
-        return loss, move_logits
+        return loss, masked_logits
