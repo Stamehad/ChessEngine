@@ -5,6 +5,8 @@ import sys
 import numpy as np
 from typing import List, Tuple, Optional, Any # Use Any for the custom LegalMove format initially
 import torch
+from dotenv import load_dotenv
+import os
 
 from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
 from chessengine.model.engine_pl import ChessLightningModule
@@ -43,7 +45,12 @@ LegalMove = Any
 # Assume model and necessary components are loaded elsewhere
 # e.g., model = load_my_transformer_model()
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-model = ChessLightningModule.load_from_checkpoint("/Users/itamarshamir/Documents/code/chess_engine/checkpoints/CHESSENGINE_6epochs/CHESSENGINE_20-19_02-04-25_epoch=epoch=04_val_loss=val_loss=0.0000.ckpt")
+# get the checkpoint path from the file checkpoint.txt
+
+load_dotenv()
+CHECKPOINT_PATH = os.getenv("CHECKPOINT_PATH")
+
+model = ChessLightningModule.load_from_checkpoint(CHECKPOINT_PATH)
 model.eval() # Set model to evaluation mode
 model.to(device)
 
