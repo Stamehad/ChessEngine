@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional, Any # Use Any for the custom LegalMove
 import torch
 from dotenv import load_dotenv
 import os
+import yaml
 
 from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
 from chessengine.model.engine_pl import ChessLightningModule
@@ -50,7 +51,11 @@ device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 load_dotenv()
 CHECKPOINT_PATH = os.getenv("CHECKPOINT_PATH")
 
-model = ChessLightningModule.load_from_checkpoint(CHECKPOINT_PATH)
+# load config from the file engine_config.yaml
+with open("engine_config.yaml", 'r') as f:
+    config = yaml.safe_load(f)
+
+model = ChessLightningModule.load_from_checkpoint(CHECKPOINT_PATH, config=config)
 model.eval() # Set model to evaluation mode
 model.to(device)
 

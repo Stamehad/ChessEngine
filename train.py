@@ -1,10 +1,17 @@
 import pytorch_lightning as pl
 import argparse
+import os
 
 #from chessengine.dataloader import get_dataloaders
 from chessengine.model.datamodule import ChessDataModule
 from chessengine.model.engine_pl import ChessLightningModule
 from train_utils import load_config, setup_trainer
+
+from dotenv import load_dotenv
+load_dotenv(".env")
+
+training_paths = os.getenv("TRAINING_DATASET").split(", ")
+test_path = os.getenv("TEST_DATASET")
 
 # setup arg parser to get checkpoint path
 def parse_args():
@@ -26,11 +33,10 @@ def main():
     pl.seed_everything(config.get("seed", 42))
 
     # Get DataLoaders
-    data_paths = ["../chess_engine/data/shards300_small/positions0.pt", "../chess_engine/data/shards300_small/positions4.pt"]
-    data_paths = ["../chess_engine/data/test_positions.pt"]
-    #train_loader, val_loader = get_dataloaders(data_paths, config)
+    # data_paths = ["../chess_engine/data/shards300_small/positions0.pt", "../chess_engine/data/shards300_small/positions4.pt"]
+    # data_paths = ["../chess_engine/data/test_positions.pt"]
 
-    dm = ChessDataModule(config, data_paths)
+    dm = ChessDataModule(config, training_paths, OVERFIT=False)
     dm.setup()
     train_loader = dm.train_dataloader()
     val_loader = dm.val_dataloader()

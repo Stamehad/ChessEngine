@@ -48,7 +48,7 @@ class ChessLightningModule(pl.LightningModule):
         self.log("val/move_accuracy", acc, prog_bar=True)
 
         avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
-        self.log("train/move_true_prob", avg_prob, prog_bar=False)
+        self.log("train/move_true_prob", avg_prob, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
         x, labels = batch
@@ -63,7 +63,7 @@ class ChessLightningModule(pl.LightningModule):
         self.log("test/move_accuracy", acc, prog_bar=True)
 
         avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
-        self.log("train/move_true_prob", avg_prob, prog_bar=False)
+        self.log("train/move_true_prob", avg_prob, prog_bar=True)
 
     def configure_optimizers(self):
 
