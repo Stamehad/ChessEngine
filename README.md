@@ -1,162 +1,154 @@
 # Chess Engine Transformer (Self-Supervised + RL)
 
-This project implements a transformer-based chess engine designed to learn in a **self-supervised** manner and eventually integrate **reinforcement learning**. It deviates from traditional approaches in several key ways to support scalability, flexibility, and interpretability.
+This project implements a transformer-based chess engine designed to learn in a **self-supervised** manner and eventually integrate **reinforcement learning**. 
 
 ---
 
-## ✨ Core Design Principles
+## ⚙️ Core Design Overview
 
-### 1. 🧠 Representation over Policy
-- Instead of directly predicting moves (e.g., with a 64 × 64 × N move head), the model learns **rich representations** of board positions.
-- This avoids:
-  - Predicting illegal moves
-  - Handling complex move structures (e.g. promotions, castling) symbolically
-- Focus shifts to modeling **state evolution and evaluation**.
-
----
-
-### 2. 🎯 Move Prediction Without a Move Head
-
-Unlike traditional engines that predict moves using a massive **(from_square × to_square × promotion_type)** classifier, this model **avoids predicting symbolic moves directly**.
-
-Instead:
-
-- The model is trained to predict the **correct piece (or empty)** on **squares that change** between consecutive positions.
-- This naturally captures:
-  - Standard moves (2 changed squares)
-  - Promotions (changed square has a different piece)
-  - En passant (2 changed squares, including captured pawn)
-  - Castling (4 changed squares)
-
-> This approach removes the need to model illegal moves entirely — it always operates on real board positions.
+- Uses a Transformer as the core architecture for global board reasoning
+- Trained first via self-supervised objectives, then refined via reinforcement learning
+- Predicts local changes in board state (square-level changes) instead of symbolic moves
+- Incorporates recycling (iterative refinement of internal state)
+- Evaluates positions via a scalar win probability score
 
 ---
 
-### 3. ♻️ Recycling and Iterative Refinement
-- Inspired by AlphaFold2, the model applies its transformer stack **multiple times per input**.
-- Each application of the model is not a move simulation but a **refinement** of the current latent representation.
+## 📊 Data
 
-> The model is not a simulator; it is a reasoner.
-
-- Recycling enables:
-  - Improved depth of reasoning without growing model depth
-  - Time vs. compute tradeoffs during inference
-  - Training stability through shallow supervision
+- Source: Lichess games database, February 2025
+- Filtered for games with:
+  - Both players rated above 2400 Elo
+  - Classical or rapid time controls (>5 minutes)
+- Final dataset:
+  - 317,083 games
+  - 2,370,238 total positions used for training
 
 ---
 
-### 4. 🏗 Refined Transformer Architecture
+## 🔄 Parsing and Input Encoding
+
+The board positions are parsed into tensors of shape `(8, 8, 21)`.
+
+- **Channels 0–12** represent piece identity:
+  - 0: empty square
+  - 1–6: white pawn, knight, bishop, rook, queen, king
+  - 7–12: black pawn, knight, bishop, rook, queen, king
+
+See the full feature table at the end for the remaining 13–20 feature channels.
+
+---
+
+## 🧠 Architecture Overview
+
+The model refines its understanding of the board by recycling its transformer output:
 
 ```python
-# High-level pseudocode for inference:
-x = one_hot_encoded_board()
-X0 = BoardEmbedding(x)
+# High-level pseudocode
+P                                 # Game position 
+E = one_hot_encoded_board(P)      # (8,8,21) board tensor
+X0 = BoardEmbedding(E)            # (64, H)
 Y0 = Transformer(X0)
 
 for i in range(N - 1):
     delta = RecycleEmbed(Yi.detach())
     Yi+1 = Transformer(X0 + delta)
 
-eval_score = EvalHead(YN)
-piece_logits = MoveHead(YN)  # Predict piece identity for each square (used for changed-square loss or move scoring)
+#Prediction heads
+eval_score = EvalHead(YN)         # (1,) Eval prediction
+piece_logits = MoveHead(YN)       # (64, 7) Predict piece at each square 
+in_check_logit = InCheckLoss(YN)  # (1,) Is the opponent in check after the move
+in_threat_logits = ThreatHead(YN) # (64, 2) Threat after move prediction per square
 ```
 
-### Components
-- **BoardEmbedding**: Maps one-hot board input to square-wise vectors
-- **Transformer**: Stack of attention blocks with layer norm, dropout, SwiGLU
-- **RecycleEmbed**: Processes transformer output to produce a residual update
-- **EvalHead**: Predicts evaluation score in [0, 1] representing win probability for white
-- **MoveHead**: Predicts the correct piece (or empty) on squares that changed from one position to the next
+- **BoardEmbedding** maps board tensor into (64, H) embeddings
+- **Transformer** stack models position with global attention
+- **RecycleEmbed** refines the representation with residual feedback
+- **EvalHead** predicts the probability white will win
+- **MoveHead** predicts the updated pieces at changed squares
+
+### 🔧 Transformer Hyperparameters
+
+- Embedding dimension: 128
+- Number of attention heads: 8
+- Number of layers: 12
+- MLP hidden dimension: 128 × 4 (via `mlp_ratio = 4`)
+- Dropout: 0.1
+
+🔁 Stochastic Recycling Schedule
+
+- During training, the number of recycling steps is sampled from [1, 2, 3, 4] (or configurable)
+- At inference, maximum number of recycles is always used
+---
+
+## 🎯 Losses and Training
+
+- **Evaluation Loss**: Predict scalar win probability ∈ [0, 1] for each position.
+  - Loss: MSE against actual game result (1 = white win, 0.5 = draw, 0 = black win)
+
+- **Move Supervision (Changed-Square Loss)**:
+  - The MoveHead outputs 7 logits per square (0 = empty, 1–6 = piece types), resulting in a `(64, 7)` prediction.
+  - For each position, we collect all legal moves into a tensor `legal_moves (64, L)`, which identifies:
+    - The set of **squares that change** under each legal move
+    - The **correct piece** that should occupy each changed square (including empty)
+  - This structure allows handling complex moves:
+    - Normal moves affect 2 squares (from and to)
+    - Castling affects 4 squares (king and rook)
+    - En passant affects 3 squares (pawn from, pawn to, captured pawn)
+  - For each of L legal moves the logits of changed squares are averaged to a single logits
+  - The loss is a cross-entropy between predicted legal moves probabilities and ground truth move. 
+
+- **Additional Auxiliary Losses:**
+  - Threat prediction loss: Predicts which squares become threatened (for both player and opponent) as a result of the move
+  - In check loss: Predicts whether the opponent is in check after the move
+
+- Future planned objectives:
+  - Contrastive state prediction
+  - Denoising / masked square prediction
+  - RL fine-tuning based on move outcomes and eval score
 
 ---
 
-### 5. 🔁 Stochastic Recycling Schedule
-- During training, the number of recycling steps is sampled from `[1, 2, 3, 4]` (or configurable).
-- Ensures the model can:
-  - Perform well under variable compute budgets
-  - Learn meaningful refinements at every step (not just final)
-- At inference, maximum number of recycles is always used.
+## 📏 Metrics
 
----
-### 6. 🧪 Self-Supervised Training Objective
+To evaluate training progress and model quality, we track the following metrics:
 
-The model is trained without labeled moves or engines — instead, it uses self-supervision derived from raw game data.
-
-#### 🏁 Current Loss: Evaluation Loss
-- Predicts the win probability for white from a given board position.
-- **Target**: game result (1 = white win, 0.5 = draw, 0 = black win)
-- **Loss**: Mean Squared Error (MSE) between predicted and target evaluation.
-
-#### 🧠 Move Supervision via Changed-Square Prediction
-Instead of predicting moves directly, the model learns to **predict what changes** between two positions.
-
-For each consecutive board pair \((X_i, X_{i+1})\):
-- Detect which squares changed.
-- For each changed square:
-  - Extract the vector from the model output \(Y_i = f(X_i)\)
-  - Project it through a small head into logits over pieces (including empty)
-  - Apply cross-entropy loss against the piece that appears in \(X_{i+1}\)
-
-This approach captures:
-- All legal move types (normal, promotion, en passant, castling)
-- Only real, legal transitions
-- Minimal output space — no giant 64×64 move matrices
-
-#### 🧪 Future Self-Supervised Losses
-- Contrastive prediction of next states
-- Denoising / masked square recovery
-- RL-based fine-tuning using evaluation and move outcomes
+- **Move Accuracy**: Percentage of positions where the highest-scoring move (based on changed-square logits) matches the ground truth move played in the game
+- **Correct Move Probability**: Average probability assigned to the ground truth move across the dataset, measuring model confidence in the correct choice
 
 ---
 
-### 🤖 Inference-Time Move Selection
+## 🧠 Inference-Time Move Selection
 
-At inference time:
-- Generate all legal moves from a position
-- For each move:
-  - Simulate the resulting board
-  - Identify changed squares
-  - Use the model to score how likely the new pieces are on those squares
-- Pick the move with the **highest total log-probability**
+To select a move during inference:
 
----
+- Use the `MoveHead` output `(64, 7)` to get logits for each square and possible piece.
+- For each legal move (from the `legal_moves` tensor):
+  - Identify the set of changed squares and the expected piece at each.
+  - Compute the average log-probability of those predicted pieces using `MoveHead` outputs.
+- Assign each move a total score based on the average log-probability across changed squares.
+- Select the move with the highest score.
 
-## 🚧 Next Steps
-- [ ] Implement move scoring by evaluating changed squares under all legal moves
-- [ ] Add intermediate supervision on recycled steps (optional)
-- [ ] Explore RL fine-tuning using evaluation score + move selection
-
----
-
-## 🧩 Design Summary
-
-| Feature                 | Motivation                                                 |
-|------------------------|------------------------------------------------------------|
-| Attention Transformer  | Global reasoning across the whole board                    |
-| Learned Positional Embedding | Let model learn square-specific inductive biases     |
-| Recycling              | Depth-time tradeoff, iterative reasoning                   |
-| Evaluation Head Only   | Avoids sparse move space; useful for RL                    |
-| Self-Supervised Loss   | Learn from raw games without expert labels                 |
-| Residual Refinement    | Better gradient flow, inspired by AlphaFold2               |
-
+This is a zero-order estimate (no rollout or simulation), relying entirely on the model’s current belief about likely state transitions.
 ---
 
 ### 7. 📚 Embedded Input Features
 
-The input tensor for each position has shape `(8, 8, 20)`. The 20 feature channels include:
+The input tensor for each position has shape `(8, 8, 21)`. The 21 feature channels include:
 
-| Channel | Description                                            |
-|---------|--------------------------------------------------------|
-| 0       | Empty square (1 if empty, else 0)                      |
-| 1–6     | White pawn, knight, bishop, rook, queen, king          |
-| 7–12    | Black pawn, knight, bishop, rook, queen, king          |
-| 13      | Side to move (1 = white to move, 0 = black)            |
-| 14      | In-check flag for the player's king (broadcasted to all squares) |
-| 15      | Threatened flag — this piece is under threat (regardless of color) |
-| 16      | Threatening flag — this piece threatens opponent pieces (player-relative) |
-| 17      | Legal move — this piece has at least one legal move    |
-| 18      | Player has castling rights (1 if yes, 0 if not)        |
-| 19      | Opponent has castling rights (1 if yes, 0 if not)      |
+| Channel | Description                                                              |
+|---------|--------------------------------------------------------------------------|
+| 0       | Empty square (1 if empty, else 0)                                        |
+| 1–6     | White pawn, knight, bishop, rook, queen, king                            |
+| 7–12    | Black pawn, knight, bishop, rook, queen, king                            |
+| 13      | Side to move (1 = white to move, 0 = black)                              |
+| 14      | In-check flag for the player's king (broadcasted to all squares)         |
+| 15      | Threatened flag — this piece is under threat (regardless of color)       |
+| 16      | Threatening flag — this piece threatens opponent pieces (player-relative)|
+| 17      | Legal move — this piece has at least one legal move                      |
+| 18      | White has castling rights (1 if yes, 0 if not)                           |
+| 19      | Black has castling rights (1 if yes, 0 if not)                           |
+| 20      | En passant square (1 at en passant target square, else 0)                |
 
 These features are used by the `BoardEmbedding` module to generate per-square input embeddings of shape `(64, H)`.
 
@@ -168,13 +160,12 @@ Each training batch consists of a dictionary with the following entries:
 
 | Key              | Shape      | Description                                                  |
 |------------------|------------|--------------------------------------------------------------|
-| `board`          | (8, 8, 20) | The raw input tensor for a position                         |
-| `eval`           | (1,)       | Scalar win probability target (1=white win, 0=black win)     |
+| `board`          | (8, 8, 20) | The raw input tensor for a position                          |
+| `eval`           | (1,)       | Scalar win target (2=white win, 1= draw, 0=black win)        |
 | `move_target`    | (64,)      | Labels for changed squares (0=empty, 1–6=piece type)         |
 | `king_square`    | (1,)       | Index [0–63] of opponent king square                         |
 | `check`          | (1,)       | Whether opponent king is in check (0 or 1)                   |
-| `threat_target`  | (64,)      | Labels for newly threatened opponent pieces (0 or 1)         |
-| `threat_mask`    | (64,)      | Mask of which squares are valid for threat prediction        |
-| `move_weight`    | (1,)       | Optional per-sample weighting for move prediction loss       |
-
-These tensors are used to compute the various loss components during training.
+| `threat_target`  | (64,)      | Labels for newly threatened opponent pieces (-100 or 0 or 1) |
+| `terminal_flag`  | (1,)       | Game state (0=active, 1=stalemate, 2=checkmate)              |
+| `legal_moves`    | (64, L)    | Like move_target (=ground truth) but for all L legal moves   |
+| `true_index`     | (1,)       | Index of the ground truth move in legal moves                |
