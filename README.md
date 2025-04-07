@@ -130,6 +130,7 @@ To select a move during inference:
 - Select the move with the highest score.
 
 This is a zero-order estimate (no rollout or simulation), relying entirely on the model’s current belief about likely state transitions.
+
 ---
 
 ### 7. 📚 Embedded Input Features
