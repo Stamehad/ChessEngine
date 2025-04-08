@@ -5,6 +5,7 @@ import torch
 from chessengine.model.engine import ChessEngine
 from chessengine.model.loss import Loss
 from chessengine.model.utils import flatten_dict
+from chessengine.model.metrics import MoveMetrics
 
 class ChessLightningModule(pl.LightningModule):
     def __init__(self, config):
@@ -27,11 +28,10 @@ class ChessLightningModule(pl.LightningModule):
         for name, val in loss_dict.items():
             self.log(f"train/loss_{name}", val, prog_bar=(name == "move"))
 
-        acc = self.compute_move_accuracy(move_logits, labels["true_index"])
-        self.log("train/move_accuracy", acc, prog_bar=True)
+        metrics = MoveMetrics.compute_all_metrics(move_logits, labels["true_index"], TRAINING=True)
 
-        avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
-        self.log("train/move_true_prob", avg_prob, prog_bar=True)
+        for k, val in metrics.items():
+            self.log(f"train/{k}", val, prog_bar=(k == "move_accuracy" or k == "true_prob"))
 
         return total_loss
 
@@ -44,11 +44,10 @@ class ChessLightningModule(pl.LightningModule):
         for name, val in loss_dict.items():
             self.log(f"val/loss_{name}", val, prog_bar=(name == "move"))
 
-        acc = self.compute_move_accuracy(move_logits, labels["true_index"])
-        self.log("val/move_accuracy", acc, prog_bar=True)
+        metrics = MoveMetrics.compute_all_metrics(move_logits, labels["true_index"])
 
-        avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
-        self.log("train/move_true_prob", avg_prob, prog_bar=True)
+        for k, val in metrics.items():
+            self.log(f"val/{k}", val, prog_bar=(k == "move_accuracy" or k == "true_prob"))
 
     def test_step(self, batch, batch_idx):
         x, labels = batch
@@ -59,11 +58,10 @@ class ChessLightningModule(pl.LightningModule):
         for name, val in loss_dict.items():
             self.log(f"test/loss_{name}", val, prog_bar=(name == "move"))
 
-        acc = self.compute_move_accuracy(move_logits, labels["true_index"])
-        self.log("test/move_accuracy", acc, prog_bar=True)
+        metrics = MoveMetrics.compute_all_metrics(move_logits, labels["true_index"])
 
-        avg_prob = self.compute_true_move_prob(move_logits, labels["true_index"])
-        self.log("train/move_true_prob", avg_prob, prog_bar=True)
+        for k, val in metrics.items():
+            self.log(f"test/{k}", val, prog_bar=(k == "move_accuracy" or k == "true_prob"))
 
     def configure_optimizers(self):
 
@@ -76,35 +74,3 @@ class ChessLightningModule(pl.LightningModule):
         optimizer = AdamW(self.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
-    
-    def compute_move_accuracy(self, move_logits, true_index):
-        """
-        Computes the accuracy of the move prediction.
-        Args:
-            move_logits (Tensor): logits for all legal moves (B, L)
-            true_index (Tensor): index of ground truth move (B,)
-        Returns:
-            accuracy (float): The accuracy of the move prediction in percentage.
-        """
-        pred_idx = move_logits.argmax(dim=-1)  # (B,)
-        correct = (pred_idx == true_index)  # (B,)
-        accuracy = 100 * correct.sum().float() / (true_index != -1).sum().float() 
-        return accuracy.item()
-    
-    def compute_true_move_prob(self, move_logits, true_index):
-        """
-        Computes the average softmax probability assigned to the correct move.
-        Args:
-            move_logits (Tensor): logits for all legal moves (B, L)
-            true_index (Tensor): index of ground truth move (B,)
-        Returns:
-            avg_prob (float): Average predicted probability assigned to the correct move.
-        """
-        mask = (true_index != -1)                               # (B,)
-        move_logits = move_logits[mask]                         # (B', L)
-        true_index = true_index[mask]                           # (B',)
-
-        probs = torch.softmax(move_logits, dim=-1)              # (B', L)
-        true_probs = probs.gather(1, true_index.unsqueeze(1))   # (B', 1)
-        avg_prob = true_probs.mean().item()                     # Scalar
-        return avg_prob

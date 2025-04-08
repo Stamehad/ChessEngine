@@ -113,8 +113,11 @@ in_threat_logits = ThreatHead(YN) # (64, 2) Threat after move prediction per squ
 
 To evaluate training progress and model quality, we track the following metrics:
 
-- **Move Accuracy**: Percentage of positions where the highest-scoring move (based on changed-square logits) matches the ground truth move played in the game
-- **Correct Move Probability**: Average probability assigned to the ground truth move across the dataset, measuring model confidence in the correct choice
+- **Move Accuracy**: Percentage of positions where the highest-scoring move (based on changed-square logits) matches the ground truth move played in the game.
+- **Correct Move Probability**: Average probability assigned to the ground truth move across the dataset, measuring model confidence in the correct choice.
+- **Top-k Move Coverage**: For `k` in {1, 3, 5}, the average total probability mass assigned to the top-k scoring moves, showing how concentrated the model's predictions are.
+- **Low Probability Fraction**: For positions with at least 20 legal moves, measures the average fraction of legal moves assigned less than 1% probability. This indicates how sparse or confident the model's distribution is.
+- **Top-k Accuracy**: For `k` in {3, 5}, the probability that the ground truth move is in top-3/5 predicted moves. 
 
 ---
 
