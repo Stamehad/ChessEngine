@@ -18,6 +18,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="CHESS ENGINE Training")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to a checkpoint file to resume training")
+    parser.add_argument("--test", action="store_true", help="Run test mode")
     return parser.parse_args()
 
 def main():
@@ -32,11 +33,15 @@ def main():
     # Set random seed for reproducibility
     pl.seed_everything(config.get("seed", 42))
 
-    # Get DataLoaders
-    # data_paths = ["../chess_engine/data/shards300_small/positions0.pt", "../chess_engine/data/shards300_small/positions4.pt"]
-    # data_paths = ["../chess_engine/data/test_positions.pt"]
+    # Load data paths
+    if args.test:
+        data_paths = [test_path]
+        print(f"Using test path: {data_paths}")
+    else:
+        data_paths = training_paths
+        print(f"Using training paths.")
 
-    dm = ChessDataModule(config, training_paths, OVERFIT=False)
+    dm = ChessDataModule(config, data_paths, OVERFIT=False)
     dm.setup()
     train_loader = dm.train_dataloader()
     val_loader = dm.val_dataloader()
@@ -50,11 +55,11 @@ def main():
     # Setup Trainer
     trainer, checkpoint_dir = setup_trainer(config["train"]) #, profiler="simple")
 
-    # if args.checkpoint:
-    #     print(f"🔄 Resuming from checkpoint: {args.checkpoint}")
-    #     trainer.test(model, val_loader, ckpt_path=args.checkpoint)
-    # else:
-    #     trainer.test(model, val_loader)  # Initial test with randomly initialized model
+    if args.checkpoint:
+        print(f"🔄 Resuming from checkpoint: {args.checkpoint}")
+        trainer.test(model, val_loader, ckpt_path=args.checkpoint)
+    else:
+        trainer.test(model, val_loader)  # Initial test with randomly initialized model
 
     # Train (from scratch or from checkpoint)
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=args.checkpoint)

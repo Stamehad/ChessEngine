@@ -1,7 +1,6 @@
 import yaml
 from chessengine.model.engine_pl import ChessLightningModule
-from chessengine.model.dataclass import ChessPositionDataset
-from chessengine.model.dataloader import get_dataloaders
+from chessengine.model.datamodule import ChessDataModule
 import pytorch_lightning as pl
 
 from dotenv import load_dotenv
@@ -17,7 +16,12 @@ def test_lightning_train_loop():
 
     ########## Initialize dataset and model ##########
     #dataset = ChessPositionDataset(["../chess_engine/data/test_positions.pt"])
-    train_loader, val_loader = get_dataloaders([TEST_DATASET], config)
+    dm = ChessDataModule(config, [TEST_DATASET])
+    dm.setup()
+
+    train_loader = dm.train_dataloader()
+    val_loader = dm.val_dataloader()
+
     model = ChessLightningModule(config)
     
     trainer = pl.Trainer(fast_dev_run=True)

@@ -74,3 +74,9 @@ class ChessLightningModule(pl.LightningModule):
         optimizer = AdamW(self.parameters(), lr=lr, weight_decay=weight_decay)
         scheduler = CosineAnnealingLR(optimizer, T_max=T_max)
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
+    
+    # def on_train_epoch_end(self):
+    #     """Free memory between epochs, avoiding the gradual RAM climb."""
+    #     dataset = self.trainer.datamodule.train_dataloader().dataset
+    #     if hasattr(dataset, "clear_cache"):
+    #         dataset.clear_cache()
