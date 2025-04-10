@@ -74,8 +74,12 @@ class ChessDataModule(pl.LightningDataModule):
                 # Compute mask of which columns are all -100
                 is_pad = (stacked == -100)     # (B, 64, L)
                 all_pad = is_pad.all(dim=(0, 1))  # (L,)
-                last_valid_index = all_pad.logical_not().nonzero(as_tuple=False).max().item()
-                trimmed = stacked[:, :, :last_valid_index + 1]
+                nonzero = all_pad.logical_not().nonzero(as_tuple=False)
+                if nonzero.numel() == 0:
+                    trimmed = stacked[:, :, :0]  # Fully padded, empty legal_moves
+                else:
+                    last_valid_index = nonzero.max().item()
+                    trimmed = stacked[:, :, :last_valid_index + 1]
                 batched_labels[k] = trimmed
             else:
                 batched_labels[k] = torch.stack(values)

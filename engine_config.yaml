@@ -4,11 +4,11 @@ data_split:
     0.1
 
 dataloader:
-    "batch_size": 64
+    "batch_size": 512 #64
     "num_workers": 2
     "persistent_workers": True
-    #"pin_memory": False
-    #"prefetch_factor": None
+    "pin_memory": False
+    "prefetch_factor": 2
 
 model:
     "feature_dim": 21
@@ -21,15 +21,15 @@ model:
     "n_recycles": 4
 
 loss:
-    'eval_loss_weight': 0.5
+    'eval_loss_weight': 0.0 # not used for pretraining
     'move_loss_weight': 1
     'threat_loss_weight': 0.2
     'incheck_loss_weight': 0.1
     'use_move_weight': False # weight moves differently depending on whether they led to win/loss/draw
 
 train:
-    'lr': 0.0001
+    'lr': 0.004
     'weight_decay': 0.01
     'T_max': 2
-    'max_epochs': 2
-    #'device': 'mps'
+    'max_epochs': 10 # 1
+    'device': 'gpu' #'mps'
