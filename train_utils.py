@@ -54,6 +54,7 @@ def setup_trainer(config, trial_mode=False, profiler=None):
     trainer_args = {
         "max_epochs": 1 if trial_mode else config['max_epochs'],
         "accelerator": config.get("device", "mps" if torch.backends.mps.is_available() else "cpu"),
+        "precision": config.get("precision", 32),
         "logger": logger,
         "callbacks": [checkpoint_callback, early_stop_callback, EpochTimerCallback()],
         "profiler": profiler,  # Add profiler if available

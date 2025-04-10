@@ -31,5 +31,6 @@ train:
     'lr': 0.004
     'weight_decay': 0.01
     'T_max': 2
-    'max_epochs': 10 # 1
+    'max_epochs': 10
     'device': 'gpu' #'mps'
+    'precision': bf16-mixed
