@@ -85,17 +85,17 @@ def evaluate_position(board: chess.Board) -> Tuple[float, List[chess.Move]]:
     - A list of top 3 move suggestions (as python-chess Move objects), sorted by model preference
     """
     print("--- Evaluating Position ---")
-    move1, move2, move3, eval_score = predict(model, board ,device) # Get eval score from model
+    move1, move2, move3, p1, p2, p3, eval_score = predict(model, board ,device) # Get eval score from model
 
-    return eval_score, [move1, move2, move3] 
+    return eval_score, [move1, move2, move3], [p1, p2, p3]
 
 def get_best_move(board: chess.Board) -> Optional[chess.Move]:
     """
     Returns the best move (as a python-chess Move object)
     """
     print("--- Getting Best Move ---")
-    best_move, _, _, _ = predict(model, board, device) # Get eval score from model
-    return best_move
+    m1, m2, m3, p1, p2, p3, _ = predict(model, board, device) # Get eval score from model
+    return [m1, m2, m3], [p1, p2, p3]
 
 # --- GUI Class ---
 class ChessGUI:
@@ -121,7 +121,9 @@ class ChessGUI:
         self.status_message = ""
         self.last_eval_score: Optional[float] = None
         self.suggested_moves: List[chess.Move] = []
+        self.probs: List[float] = []
         self.move_history_san: List[str] = []
+        self.engine_status_message = ""
 
         # GUI Element Rects
         self.board_rect = pygame.Rect(0, 0, BOARD_SIZE, BOARD_SIZE)
@@ -250,6 +252,14 @@ class ChessGUI:
             if i >= 2: break # Show top 3
 
         y_offset += MARGIN # Spacer
+
+        # Engine Move Info
+        if self.engine_status_message:
+            lines = self.engine_status_message.split("\n")
+            for line in lines:
+                msg_render = self.font_small.render(line, True, TEXT_COLOR)
+                self.screen.blit(msg_render, (BOARD_SIZE + MARGIN, y_offset))
+                y_offset += 20
 
         # Move History
         history_title = self.font_medium.render("Move History:", True, TEXT_COLOR)
@@ -393,15 +403,18 @@ class ChessGUI:
         """Calls the engine to evaluate the current position."""
         if self.game_over: return
         print("Requesting evaluation...")
-        self.last_eval_score, _ = evaluate_position(self.board) # Get eval score from model
+        self.last_eval_score, _, _ = evaluate_position(self.board) # Get eval score from model
         print(f"Evaluation received: {self.last_eval_score}")
 
     def _request_suggestions(self):
         """Calls the engine to suggest top moves."""
         if self.game_over: return
         print("Requesting suggestions...")
-        _, self.suggested_moves = evaluate_position(self.board) 
-        print(f"Suggestions received: {[m.uci() for m in self.suggested_moves]}")
+        _, self.suggested_moves, self.probs  = evaluate_position(self.board) 
+        for m, p in zip(self.suggested_moves, self.probs):
+            if m is not None:
+                print(f"Move: {m.uci()}, Probability: {p:.2f}")
+        #print(f"Suggestions received: {[m.uci() for m in self.suggested_moves]}")
 
     def _engine_thinks_and_moves(self):
         """Handles the engine's turn."""
@@ -410,7 +423,8 @@ class ChessGUI:
             self._update_display() # Update display to show it's engine's turn before thinking
             pygame.time.wait(100) # Small delay to allow display update
 
-            best_move = get_best_move(self.board) # Get best move from model
+            moves, probs = get_best_move(self.board) # Get best move from model
+            best_move = moves[0] if moves else None
             
             # Ensure we have valid moves for the engine
             if best_move is None:
@@ -421,7 +435,10 @@ class ChessGUI:
                  return
 
             if best_move and best_move in self.board.legal_moves:
-                print(f"Engine plays: {self.board.san(best_move)}")
+                self.engine_status_message = f"Engine played: {self.board.san(best_move)} ({probs[0]*100:.1f}%)"
+                for i, (m, p) in enumerate(zip(moves[1:], probs[1:]), start=2):
+                    if m is not None:
+                        self.engine_status_message += f"\n{i}. {m.uci()} ({p*100:.1f}%)"
                 self._make_move(best_move)
             elif best_move:
                  print(f"Error: Engine suggested an illegal move: {best_move.uci()}. Legal moves: {[m.uci() for m in self.board.legal_moves]}")

@@ -103,6 +103,8 @@ def predict(model, board, device) -> Tuple[chess.Move, chess.Move, chess.Move, f
         move_logits = move_logits.masked_fill(~legal_moves_mask, float('-inf'))
 
         move_logits = move_logits.to("cpu")
+        probs = torch.nn.functional.softmax(move_logits, dim=-1) # (1, L)
+        probs = probs.squeeze(0)  # (L,)
 
         # Get the index of the 3 best moves
         num_moves = len(legal_moves_list)
@@ -117,11 +119,17 @@ def predict(model, board, device) -> Tuple[chess.Move, chess.Move, chess.Move, f
             move1 = legal_moves_list[top_indices[0, 0]]
             move2 = legal_moves_list[top_indices[0, 1]]
             move3 = None
+            p1 = probs[top_indices[0, 0]]
+            p2 = probs[top_indices[0, 1]]
         else:
             _, top_indices = torch.topk(move_logits, k=3, dim=-1)
             move1 = legal_moves_list[top_indices[0, 0]]
             move2 = legal_moves_list[top_indices[0, 1]]
             move3 = legal_moves_list[top_indices[0, 2]]
 
-    return move1, move2, move3, eval
+        p1 = probs[top_indices[0, 0]]
+        p2 = probs[top_indices[0, 1]] if num_moves > 1 else None
+        p3 = probs[top_indices[0, 2]] if num_moves > 2 else None
+
+    return move1, move2, move3, p1, p2, p3, eval
 

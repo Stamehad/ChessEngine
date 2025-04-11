@@ -164,7 +164,7 @@ Each training batch consists of a dictionary with the following entries:
 
 | Key              | Shape      | Description                                                  |
 |------------------|------------|--------------------------------------------------------------|
-| `board`          | (8, 8, 20) | The raw input tensor for a position                          |
+| `board`          | (8, 8, 21) | The raw input tensor for a position                          |
 | `eval`           | (1,)       | Scalar win target (2=white win, 1= draw, 0=black win)        |
 | `move_target`    | (64,)      | Labels for changed squares (0=empty, 1–6=piece type)         |
 | `king_square`    | (1,)       | Index [0–63] of opponent king square                         |
