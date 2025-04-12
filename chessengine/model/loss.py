@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from chessengine.model.loss_heads import EvalLoss, InCheckLoss, ThreatLoss, LegalMoveLoss
+from chessengine.model.loss_heads import EvalLoss, ProbEvalLoss, InCheckLoss, ThreatLoss, LegalMoveLoss
 
 class Loss(nn.Module):
     """
@@ -10,7 +10,14 @@ class Loss(nn.Module):
     """
     def __init__(self, config):
         super().__init__()
-        self.eval_loss = EvalLoss(config)
+
+        self.USE_PROB_EVAL = config['model'].get('use_prob_eval', True)
+        if self.USE_PROB_EVAL:
+            self.prob_eval_loss = ProbEvalLoss(config)
+            eval_weight = config['loss'].get('prob_eval_loss_weight', 1.0)
+        else:
+            self.eval_loss = EvalLoss(config)
+            eval_weight = config['loss'].get('eval_loss_weight', 1.0)
         self.incheck_loss = InCheckLoss(config)
         self.threat_loss = ThreatLoss(config)
         self.move_loss = LegalMoveLoss(config)
@@ -18,7 +25,7 @@ class Loss(nn.Module):
         # Default weights if not specified in config
         loss_config = config['loss']
         self.weights = {
-            'eval': loss_config.get('eval_loss_weight', 1.0),
+            'eval': eval_weight,
             'incheck': loss_config.get('incheck_loss_weight', 1.0),
             'threat': loss_config.get('threat_loss_weight', 1.0),
             'move': loss_config.get('move_loss_weight', 3.0),
@@ -47,8 +54,12 @@ class Loss(nn.Module):
             move_weight = 0.5 + 0.5 * labels.get('eval') # (B, 1)
         else:
             move_weight = None
-
-        loss_eval, _ = self.eval_loss(x, labels["eval"])
+        if self.USE_PROB_EVAL:
+            loss_eval, eval_logits = self.prob_eval_loss(x, labels["eval"])
+        else:
+            loss_eval, _ = self.eval_loss(x, labels["eval"])
+            eval_logits = None
+           
         loss_check, _ = self.incheck_loss(x, labels["king_square"], labels["check"])
         loss_threat, _ = self.threat_loss(x, labels["threat_target"])
         loss_move, move_logits = self.move_loss(move_pred, labels["legal_moves"], labels["true_index"], move_weight) 
@@ -67,4 +78,9 @@ class Loss(nn.Module):
             "move": loss_move.item(),
         }
 
-        return total, loss_dict, move_logits # (1,), (1,), (B, L)
+        logit_dict = {
+            "eval": eval_logits,    # (B, 3)
+            "move": move_logits     # (B, L)
+        }
+
+        return total, loss_dict, logit_dict # (1,)  

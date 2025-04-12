@@ -4,33 +4,35 @@ data_split:
     0.1
 
 dataloader:
-    "batch_size": 512 #64
-    "num_workers": 2
-    "persistent_workers": True
-    "pin_memory": False
-    "prefetch_factor": 2
+    batch_size: 512 #64
+    num_workers: 2
+    persistent_workers: True
+    pin_memory: False
+    prefetch_factor: 2
 
 model:
-    "feature_dim": 21
-    "embed_dim": 128
-    "num_heads": 8
-    "dropout": 0.1
-    "mlp_ratio": 4
-    "eval_hidden_dim": 128
-    "num_layers": 12 # 8-12
-    "n_recycles": 4
+    use_prob_eval: True
+    feature_dim: 21
+    embed_dim: 128
+    num_heads: 8
+    dropout: 0.1
+    mlp_ratio: 4
+    eval_hidden_dim: 128
+    num_layers: 12 # 8-12
+    n_recycles: 4
 
 loss:
-    'eval_loss_weight': 0.0 # not used for pretraining
-    'move_loss_weight': 1
-    'threat_loss_weight': 0.2
-    'incheck_loss_weight': 0.1
-    'use_move_weight': False # weight moves differently depending on whether they led to win/loss/draw
+    eval_loss_weight: 0.0 # not used for pretraining
+    prob_eval_loss_weight: 1 
+    move_loss_weight: 1
+    threat_loss_weight: 0.2
+    incheck_loss_weight: 0.1
+    use_move_weight: False # weight moves differently depending on whether they led to win/loss/draw
 
 train:
-    'lr': 0.004
-    'weight_decay': 0.01
-    'T_max': 2
-    'max_epochs': 10
-    'device': 'gpu' #'mps'
-    'precision': bf16-mixed
+    lr: 0.004
+    weight_decay: 0.01
+    T_max: 2 # updated dynamically
+    max_epochs: 10
+    device: gpu #mps
+    precision: bf16-mixed

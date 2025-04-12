@@ -72,5 +72,8 @@ class EpochTimerCallback(pl.Callback):
 
     def on_train_epoch_end(self, trainer, pl_module):
         epoch_duration = time.time() - pl_module.start_time
-        trainer.logger.experiment.add_scalar("epoch_time", epoch_duration, trainer.current_epoch)
+        if hasattr(trainer.logger.experiment, "add_scalar"):
+            trainer.logger.experiment.add_scalar("epoch_time", epoch_duration, trainer.current_epoch)
+        elif hasattr(trainer.logger, "log_metrics"):
+            trainer.logger.log_metrics({"epoch_time": epoch_duration}, step=trainer.current_epoch)
         print(f"Epoch {trainer.current_epoch} time: {epoch_duration:.2f} sec")

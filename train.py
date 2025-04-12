@@ -16,7 +16,7 @@ test_path = os.getenv("TEST_DATASET")
 # setup arg parser to get checkpoint path
 def parse_args():
     parser = argparse.ArgumentParser(description="CHESS ENGINE Training")
-    parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
+    parser.add_argument("--config", type=str, default="engine_config.yaml", help="Path to config file")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to a checkpoint file to resume training")
     parser.add_argument("--test", action="store_true", help="Run test mode")
     return parser.parse_args()
@@ -24,11 +24,9 @@ def parse_args():
 def main():
     # Load args
     args = parse_args()
-    #config = load_config(args.config)
 
     # Load YAML config
-    config_path = "engine_config.yaml"
-    config = load_config(config_path)
+    config = load_config(args.config)
 
     # Set random seed for reproducibility
     pl.seed_everything(config.get("seed", 42))

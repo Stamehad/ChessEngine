@@ -3,10 +3,15 @@ import torch
 class MoveMetrics:
 
     @staticmethod
-    def compute_all_metrics(move_logits, true_index, TRAINING=False):
+    def compute_all_metrics(logit_dict, lables, TRAINING=False):
         """
         Computes all defined metrics and returns a combined dictionary.
         """
+        move_logits = logit_dict["move"]  # (B, L)
+        eval_logits = logit_dict["eval"]  # (B, 3)
+        true_index = lables["true_index"]  # (B,)
+        eval = lables["eval"]  # (B, 1)
+
         prepared = MoveMetrics._prepare(move_logits, true_index)
         if prepared is None:
             return {}
@@ -16,6 +21,10 @@ class MoveMetrics:
 
         metrics["move_accuracy"] = MoveMetrics.compute_move_accuracy(move_logits, true_index)
         metrics["true_prob"] = MoveMetrics.compute_true_move_prob(probs, true_index)
+
+        if eval_logits is not None:
+            metrics["eval_accuracy"] = MoveMetrics.eval_accuracy(eval_logits, eval)
+            
         if not TRAINING:
             metrics.update(MoveMetrics.compute_topk_probs(probs, valid_mask, legal_counts))
             metrics.update(MoveMetrics.compute_topk_accuracy(move_logits, true_index, valid_mask, legal_counts))
@@ -27,6 +36,7 @@ class MoveMetrics:
         Args:
             move_logits (Tensor): logits for all legal moves (B, L)
             true_index (Tensor): index of ground truth move (B,)
+            eval (Tensor): eval class (B, 1), 0 for black win, 1 for draw, 2 for white win
         Returns:
             move_logits (Tensor): logits for all legal moves (B', L)
             true_index (Tensor): index of ground truth move (B',)
@@ -103,6 +113,21 @@ class MoveMetrics:
             acc = 100 * correct.sum().float() / correct.numel()
             topk_accs[f"top{k}_acc"] = acc.item()
         return topk_accs
+    
+    @staticmethod
+    def eval_accuracy(eval_logits, eval):
+        """
+        Computes the accuracy of the eval prediction.
+        Args:
+            eval_logits (Tensor): logits for eval (B, 1)
+            eval (Tensor): ground truth eval (B, 1)
+        Returns:
+            accuracy (float): The accuracy of the eval prediction in percentage.
+        """
+        eval_pred = torch.argmax(eval_logits, dim=-1)
+        eval_acc = (eval_pred == eval).float().mean()
+
+        return eval_acc.item()
 
 
 # def compute_move_accuracy(self, move_logits, true_index):

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from chessengine.model.evalhead import EvalHead
+from chessengine.model.evalhead import EvalHead, ProbEvalHead
 from chessengine.model.incheckhead import InCheckHead
 from chessengine.model.threathead import ThreatHead
 from chessengine.model.utils import masked_one_hot
@@ -19,9 +19,36 @@ class EvalLoss(nn.Module):
         preds: Tensor of shape (B, 1) with values in [0, 1]
         eval: Tensor of shape (B, 1) with values in {0, 0.5, 1}
         """
+        # Prepare evals
+        eval = eval.float()/2  # (B, 1)
         preds = self.head(x)  # (B, 1)
         loss = self.loss_fn(preds, eval)
         return loss, preds
+    
+class ProbEvalLoss(nn.Module):
+    """
+    Computes the cross-entropy loss for the probabilistic evaluation head.
+    I.e. given a position the head predicts the probability of each outcome:
+    - White winning
+    - Draw
+    - Black winning
+    When no ground truth move is available, the loss is ignored.
+    The predition is obtained from the [EVAL] token.
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.head = ProbEvalHead(config['model'])
+        self.loss_fn = nn.CrossEntropyLoss()
+
+    def forward(self, x, eval):
+        """
+        x: transformer output (B, 65, H)
+        eval_logits: Tensor of shape (B, 3) with logits for [white_win, draw, black_win]
+        eval: Tensor of shape (B,) with values in {0, 1, 2}
+        """
+        eval_logits = self.head(x)  # (B, 3)
+        loss = self.loss_fn(eval_logits.view(-1, 3), eval.view(-1))
+        return loss, eval_logits
     
 class InCheckLoss(nn.Module):
     """

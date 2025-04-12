@@ -47,7 +47,7 @@ class ChessPositionDataset(torch.utils.data.Dataset):
     def format_item(self, idx):
         x = self.data['board'][idx].float()  # (8, 8, 21)
         labels = {
-            'eval': self.data['eval'][idx].float() / 2,                   # (1,)
+            'eval': self.data['eval'][idx].long(),                        # (1,)
             'check': self.data['check'][idx].float(),                     # (1,)
             'king_square': self.data['king_square'][idx].long(),          # (1,)
             'threat_target': self.data['threat_target'][idx].long(),      # (64,)
