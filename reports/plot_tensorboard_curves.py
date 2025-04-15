@@ -2,6 +2,10 @@ import os
 from tensorboard.backend.event_processing import event_accumulator
 import matplotlib.pyplot as plt
 
+def f(s):
+    """Extracts loss/metric name x from val/x"""
+    return s.split("/")[1]
+
 def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_per_epoch=None):
     """
     Plot selected scalar metrics from a TensorBoard log directory.
@@ -61,7 +65,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[0].plot(steps, values, label=tag)
+        axs[0].plot(steps, values, label=f(tag))
     axs[0].set_ylabel("Loss")
     axs[0].set_title("Total and Move Loss")
     axs[0].legend(loc="center left", bbox_to_anchor=(1, 0.5))
@@ -76,7 +80,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[1].plot(steps, values, label=tag)
+        axs[1].plot(steps, values, label=f(tag))
     axs[1].set_ylabel("Loss")
     axs[1].set_title("Eval Loss")
     axs[1].legend(loc="center left", bbox_to_anchor=(1, 0.5))
@@ -91,7 +95,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[2].plot(steps, values, label=tag)
+        axs[2].plot(steps, values, label=f(tag))
     axs[2].set_ylabel("Loss")
     axs[2].set_title("Eval, Incheck, and Threat Losses")
     axs[2].legend(loc="center left", bbox_to_anchor=(1, 0.5))
@@ -106,7 +110,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[3].plot(steps, values, label=tag)
+        axs[3].plot(steps, values, label=f(tag))
     axs[3].set_ylabel("Probability (%)")
     axs[3].set_title("Top-k Probabilities")
     axs[3].legend(loc="center left", bbox_to_anchor=(1, 0.5))
@@ -121,7 +125,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[4].plot(steps, values, label=tag)
+        axs[4].plot(steps, values, label=f(tag))
     axs[4].set_ylabel("Accuracy (%)")
     axs[4].set_title("Move Accuracies")
     axs[4].legend(loc="center left", bbox_to_anchor=(1, 0.5))
@@ -136,7 +140,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[5].plot(steps, values, label=tag)
+        axs[5].plot(steps, values, label=f(tag))
     axs[5].set_ylabel("True Prob (%)")
     axs[5].set_title("Probability of True Move")
     axs[5].legend(loc="center left", bbox_to_anchor=(1, 0.5))
@@ -151,7 +155,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[6].plot(steps, values, label=tag)
+        axs[6].plot(steps, values, label=f(tag))
     axs[6].set_ylabel("Lowprob Fraction (%)")
     axs[6].set_title("Low Probability Fraction (moves < 1%)")
     axs[6].legend(loc="center left", bbox_to_anchor=(1, 0.5))
@@ -166,7 +170,7 @@ def plot_tensorboard_metrics(logdir, tag_filter="val/", figsize=(12, 14), steps_
             steps = [int(s // steps_per_epoch) for s in steps_raw]
         else:
             steps = steps_raw
-        axs[7].plot(steps, values, label=tag)
+        axs[7].plot(steps, values, label=f(tag))
     axs[7].set_ylabel("Accuracy (%)")
     axs[7].set_title("Eval Accuracy")
     axs[7].legend(loc="center left", bbox_to_anchor=(1, 0.5))
