@@ -35,7 +35,7 @@ TEXT_COLOR = BLACK
 
 # Piece Assets Path (Make sure this directory exists and contains piece images)
 # Images should be named like wP.png, bP.png, wN.png, bN.png, etc.
-ASSET_PATH = "chessengine/pieces/" # CHANGE IF NEEDED
+ASSET_PATH = "chessengine/GameEnv/pieces/" # CHANGE IF NEEDED
 
 # --- Type Hint for Custom Model Move Format ---
 # Replace 'Any' with the actual type/structure if known
@@ -49,7 +49,7 @@ device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 # get the checkpoint path from the file checkpoint.txt
 
 load_dotenv()
-CHECKPOINT_PATH = os.getenv("CHECKPOINT_PATH")
+CHECKPOINT_PATH = os.getenv("BASE_MODEL")
 
 # load config from the file engine_config.yaml
 with open("engine_config.yaml", 'r') as f:
@@ -81,13 +81,13 @@ def prepare_features(board: chess.Board) -> Tuple[np.ndarray, List[LegalMove]]:
 def evaluate_position(board: chess.Board) -> Tuple[float, List[chess.Move]]:
     """
     Returns:
-    - Evaluation score (positive if white is better, negative if black is better)
+    - Result probability distribution (3, ) for black win, draw and white win
     - A list of top 3 move suggestions (as python-chess Move objects), sorted by model preference
     """
     print("--- Evaluating Position ---")
-    move1, move2, move3, p1, p2, p3, eval_score = predict(model, board ,device) # Get eval score from model
+    move1, move2, move3, p1, p2, p3, prob_eval = predict(model, board ,device) # Get eval score from model
 
-    return eval_score, [move1, move2, move3], [p1, p2, p3]
+    return prob_eval, [move1, move2, move3], [p1, p2, p3]
 
 def get_best_move(board: chess.Board) -> Optional[chess.Move]:
     """
@@ -221,7 +221,7 @@ class ChessGUI:
         pygame.draw.rect(self.screen, BUTTON_COLOR, self.eval_button_rect)
 
         suggest_text = self.font_medium.render("Suggest Moves", True, BUTTON_TEXT_COLOR)
-        eval_text = self.font_medium.render("Evaluate Position", True, BUTTON_TEXT_COLOR)
+        eval_text = self.font_medium.render("Evaluate", True, BUTTON_TEXT_COLOR)
         self.screen.blit(suggest_text, (self.suggest_button_rect.x + 10, self.suggest_button_rect.y + 10))
         self.screen.blit(eval_text, (self.eval_button_rect.x + 10, self.eval_button_rect.y + 10))
 
@@ -235,7 +235,7 @@ class ChessGUI:
         y_offset += 30
 
         # Evaluation Display
-        eval_str = f"Eval: {self.last_eval_score:.2f}" if self.last_eval_score is not None else "Eval: N/A"
+        eval_str = f"W {100*self.Pw:.1f}% D {100*self.Pd:.1f}% B {100*self.Pb:.1f}%" if self.last_eval_score is not None else "Eval: N/A"
         eval_render = self.font_medium.render(eval_str, True, TEXT_COLOR)
         self.screen.blit(eval_render, (BOARD_SIZE + MARGIN, y_offset))
         y_offset += 30
@@ -403,8 +403,12 @@ class ChessGUI:
         """Calls the engine to evaluate the current position."""
         if self.game_over: return
         print("Requesting evaluation...")
-        self.last_eval_score, _, _ = evaluate_position(self.board) # Get eval score from model
-        print(f"Evaluation received: {self.last_eval_score}")
+        prob_eval, _, _ = evaluate_position(self.board) # Get eval score from model
+        self.Pb = prob_eval[0].item()
+        self.Pd = prob_eval[1].item()
+        self.Pw = prob_eval[2].item()
+        self.last_eval_score = self.Pw - self.Pb # White's perspective
+        print(f"Evaluation: Black Win: {self.Pb:.2f}, Draw: {self.Pd:.2f}, White Win: {self.Pw:.2f}")
 
     def _request_suggestions(self):
         """Calls the engine to suggest top moves."""

@@ -67,6 +67,30 @@ def generate_legal_moves(board: chess.Board):
 
     return torch.stack(legal_move_tensors, dim=1), legal_move_list # (64, L), [chess.Move]
 
+def get_eval_prob(model, x_out: torch.Tensor, device = "cpu") -> torch.Tensor:
+    eval = model.loss_module.prob_eval_loss.head(x_out) # (1, 3)
+    prob_eval = torch.nn.functional.softmax(eval, dim=-1).squeeze(0)  # (3,)
+    prob_eval = prob_eval.to(device)  # Convert to CPU for easier handling
+
+    return prob_eval # (3,)
+
+def get_move_probs(move_pred: torch.Tensor, legal_moves: torch.Tensor, device="cpu") -> torch.Tensor:
+    legal_moves_one_hot = masked_one_hot(legal_moves, num_classes=7, mask_value=-100)  # (1, 64, L, 7)
+    legal_moves_mask = (legal_moves != -100).any(dim=1)  # (1, L)
+    move_pred = move_pred.unsqueeze(2)  # (1, 64, 1, 7)
+    move_logits = (move_pred * legal_moves_one_hot).sum(dim=-1)  # (1, 64, L)
+
+    # Average over changed squares
+    mask = (legal_moves != -100)  # (1, 64, L)
+    move_logits = move_logits.sum(dim=1) / mask.sum(dim=1).clamp(min=1)  # (1, L)
+    move_logits = move_logits.masked_fill(~legal_moves_mask, float('-inf'))
+
+    move_logits = move_logits.to(device)
+    probs = torch.nn.functional.softmax(move_logits, dim=-1) # (1, L)
+    probs = probs.squeeze(0)  # (L,)
+
+    return probs # (L,), (1, L)
+
 def predict(model, board, device) -> Tuple[chess.Move, chess.Move, chess.Move, float]:
     """
     Predict the best move for a given board state using the provided model.
@@ -88,48 +112,31 @@ def predict(model, board, device) -> Tuple[chess.Move, chess.Move, chess.Move, f
     with torch.no_grad():
         model.eval()
         x_out, move_pred = model(x) # (1, 65, H), (1, 64, 7)
-
-        eval = model.loss_module.eval_loss.head(x_out).squeeze(0) # (1,)
-        eval = eval.to("cpu").item()  # Convert to CPU for easier handling
-        
-        legal_moves_one_hot = masked_one_hot(legal_moves, num_classes=7, mask_value=-100)  # (1, 64, L, 7)
-        legal_moves_mask = (legal_moves != -100).any(dim=1)  # (1, L)
-        move_pred = move_pred.unsqueeze(2)  # (1, 64, 1, 7)
-        move_logits = (move_pred * legal_moves_one_hot).sum(dim=-1)  # (1, 64, L)
-
-        # Average over changed squares
-        mask = (legal_moves != -100)  # (1, 64, L)
-        move_logits = move_logits.sum(dim=1) / mask.sum(dim=1).clamp(min=1)  # (1, L)
-        move_logits = move_logits.masked_fill(~legal_moves_mask, float('-inf'))
-
-        move_logits = move_logits.to("cpu")
-        probs = torch.nn.functional.softmax(move_logits, dim=-1) # (1, L)
-        probs = probs.squeeze(0)  # (L,)
+        prob_eval = get_eval_prob(model, x_out, device="cpu") # (3,)
+        probs = get_move_probs(move_pred, legal_moves, device="cpu") # (L,)
 
         # Get the index of the 3 best moves
         num_moves = len(legal_moves_list)
 
         if num_moves == 0:
-            move1 = move2 = move3 = None  # or raise an exception if that suits you better
+            move1 = move2 = move3 = None 
+            p1 = p2 = p3 = None
         elif num_moves == 1:
             move1 = legal_moves_list[0]
             move2 = move3 = None
+            p1, p2, p3 = probs[0], None, None
         elif num_moves == 2:
-            _, top_indices = torch.topk(move_logits, k=2, dim=-1)
-            move1 = legal_moves_list[top_indices[0, 0]]
-            move2 = legal_moves_list[top_indices[0, 1]]
+            p, idx = torch.topk(probs, k=2)
+            move1 = legal_moves_list[idx[0]]
+            move2 = legal_moves_list[idx[1]]
             move3 = None
-            p1 = probs[top_indices[0, 0]]
-            p2 = probs[top_indices[0, 1]]
+            p1, p2, p3 = p[0], p[1], None
         else:
-            _, top_indices = torch.topk(move_logits, k=3, dim=-1)
-            move1 = legal_moves_list[top_indices[0, 0]]
-            move2 = legal_moves_list[top_indices[0, 1]]
-            move3 = legal_moves_list[top_indices[0, 2]]
+            p, idx = torch.topk(probs, k=3)
+            move1 = legal_moves_list[idx[0]]
+            move2 = legal_moves_list[idx[1]]
+            move3 = legal_moves_list[idx[2]]
+            p1, p2, p3 = p[0], p[1], p[2]
 
-        p1 = probs[top_indices[0, 0]]
-        p2 = probs[top_indices[0, 1]] if num_moves > 1 else None
-        p3 = probs[top_indices[0, 2]] if num_moves > 2 else None
-
-    return move1, move2, move3, p1, p2, p3, eval
+    return move1, move2, move3, p1, p2, p3, prob_eval
 
