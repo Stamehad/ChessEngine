@@ -11,7 +11,7 @@ import yaml
 
 from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
 from chessengine.model.engine_pl import ChessLightningModule
-from chessengine.model.prediction import predict
+from chessengine.model.prediction import predict3
 
 # --- Constants ---
 SCREEN_WIDTH = 800
@@ -85,7 +85,7 @@ def evaluate_position(board: chess.Board) -> Tuple[float, List[chess.Move]]:
     - A list of top 3 move suggestions (as python-chess Move objects), sorted by model preference
     """
     print("--- Evaluating Position ---")
-    move1, move2, move3, p1, p2, p3, prob_eval = predict(model, board ,device) # Get eval score from model
+    move1, move2, move3, p1, p2, p3, prob_eval = predict3(model, board ,device) # Get eval score from model
 
     return prob_eval, [move1, move2, move3], [p1, p2, p3]
 
@@ -94,7 +94,7 @@ def get_best_move(board: chess.Board) -> Optional[chess.Move]:
     Returns the best move (as a python-chess Move object)
     """
     print("--- Getting Best Move ---")
-    m1, m2, m3, p1, p2, p3, _ = predict(model, board, device) # Get eval score from model
+    m1, m2, m3, p1, p2, p3, _ = predict3(model, board, device) # Get eval score from model
     return [m1, m2, m3], [p1, p2, p3]
 
 # --- GUI Class ---

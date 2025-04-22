@@ -3,7 +3,7 @@ import chess
 import numpy as np
 from typing import Tuple, List
 from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
-from chessengine.model.utils import masked_one_hot
+from chessengine.model.utils import masked_one_hot, batch_legal_moves
 
 def get_move(move_tensor: torch.tensor) -> chess.Move:
     """
@@ -21,7 +21,7 @@ def get_move(move_tensor: torch.tensor) -> chess.Move:
     """
     pass
 
-def generate_legal_moves(board: chess.Board):
+def generate_legal_moves(board: chess.Board) -> Tuple[torch.Tensor, List[chess.Move]]:
     legal_move_tensors = []
     legal_move_list = []
 
@@ -67,31 +67,110 @@ def generate_legal_moves(board: chess.Board):
 
     return torch.stack(legal_move_tensors, dim=1), legal_move_list # (64, L), [chess.Move]
 
+def get_batch_legal_moves(boards: List[chess.Board]) -> Tuple[torch.Tensor, List[List[chess.Move]]]:
+    """
+    Args:
+        boards: List of chess.Board objects.
+    Returns:
+        A tensor of shape (B, 64, L_max) where B is the number of boards and L_max is the maximum number of legal moves
+        across all boards. The tensor contains -100 for empty squares and 0-6 for piece types.
+        A list of lists of chess.Move objects corresponding to each board.
+    """
+    legal_move_tensors = []
+    legal_move_lists = []
+    for b in boards:
+        legal_moves, legal_move_list = generate_legal_moves(b)
+        legal_move_tensors.append(legal_moves)
+        legal_move_lists.append(legal_move_list)
+    legal_move_tensors, mask = batch_legal_moves(legal_move_tensors) # (B, 64, L_max), (B, L_max)
+    ################# CAUTION #################
+    # legal_move_lists is not padded to L_max!
+    ###########################################
+    return legal_move_tensors, legal_move_lists # (B, 64, L_max), [List[chess.Move]]
+
 def get_eval_prob(model, x_out: torch.Tensor, device = "cpu") -> torch.Tensor:
-    eval = model.loss_module.prob_eval_loss.head(x_out) # (1, 3)
-    prob_eval = torch.nn.functional.softmax(eval, dim=-1).squeeze(0)  # (3,)
+    eval = model.loss_module.prob_eval_loss.head(x_out) # (B, 3)
+    prob_eval = torch.nn.functional.softmax(eval, dim=-1)  # (B, 3)
     prob_eval = prob_eval.to(device)  # Convert to CPU for easier handling
 
-    return prob_eval # (3,)
+    return prob_eval # (B, 3)
 
 def get_move_probs(move_pred: torch.Tensor, legal_moves: torch.Tensor, device="cpu") -> torch.Tensor:
-    legal_moves_one_hot = masked_one_hot(legal_moves, num_classes=7, mask_value=-100)  # (1, 64, L, 7)
-    legal_moves_mask = (legal_moves != -100).any(dim=1)  # (1, L)
-    move_pred = move_pred.unsqueeze(2)  # (1, 64, 1, 7)
-    move_logits = (move_pred * legal_moves_one_hot).sum(dim=-1)  # (1, 64, L)
+    legal_moves_one_hot = masked_one_hot(legal_moves, num_classes=7, mask_value=-100)  # (B, 64, L, 7)
+    legal_moves_mask = (legal_moves != -100).any(dim=1)  # (B, L)
+    move_pred = move_pred.unsqueeze(2)  # (B, 64, 1, 7)
+    move_logits = (move_pred * legal_moves_one_hot).sum(dim=-1)  # (B, 64, L)
 
     # Average over changed squares
-    mask = (legal_moves != -100)  # (1, 64, L)
-    move_logits = move_logits.sum(dim=1) / mask.sum(dim=1).clamp(min=1)  # (1, L)
+    mask = (legal_moves != -100)  # (B, 64, L)
+    move_logits = move_logits.sum(dim=1) / mask.sum(dim=1).clamp(min=1)  # (B, L)
     move_logits = move_logits.masked_fill(~legal_moves_mask, float('-inf'))
 
     move_logits = move_logits.to(device)
-    probs = torch.nn.functional.softmax(move_logits, dim=-1) # (1, L)
-    probs = probs.squeeze(0)  # (L,)
+    probs = torch.nn.functional.softmax(move_logits, dim=-1) # (B, L)
 
-    return probs # (L,), (1, L)
+    return probs # (B, L)
 
-def predict(model, board, device) -> Tuple[chess.Move, chess.Move, chess.Move, float]:
+def predict(model, board, device, out_device="cpu") -> Tuple[torch.Tensor, torch.Tensor, List[chess.Move]]:
+    """
+    Predict the best move for a given board state using the provided model.
+
+    Args:
+        model: The trained chess model.
+        board: The current state of the chess board. 
+
+    Returns:
+        probs: A tensor of shape (L,) containing the probabilities of each legal move.
+        prob_eval: A tensor of shape (3,) containing the evaluation probabilities (black win, draw, white win).
+        legal_moves_list: A list of legal moves in chess.Move format.
+    """
+    # Convert the board to a tensor and add a batch dimension
+    x = encode_board(board).unsqueeze(0).float().to(device) # (1, 8, 8, 21)
+
+    legal_moves, legal_moves_list = generate_legal_moves(board) # (64, L)
+    legal_moves = legal_moves.unsqueeze(0).long().to(device)  # (1, 64, L) 
+
+    # Get the model's predictions
+    with torch.no_grad():
+        model.eval()
+        x_out, move_pred = model(x) # (1, 65, H), (1, 64, 7)
+        prob_eval = get_eval_prob(model, x_out, device=out_device).squeeze(0) # (3,)
+        probs = get_move_probs(move_pred, legal_moves, device=out_device).squeeze(0) # (L,)
+
+    return probs, prob_eval, legal_moves_list # (L,), (3,), [chess.Move]
+
+def batch_predict(model, boards: List[chess.Board], device="cuda", out_device="cpu"):
+    """
+    Predict move distributions and evaluations for a batch of board positions.
+
+    Args:
+        model: The trained chess model.
+        boards: List of chess.Board objects.
+        device: Device to perform model inference on ("cuda" or "cpu").
+
+    Returns:
+        probs: Tensor of shape (B, L_max) with move probabilities (padded).
+        prob_eval: Tensor of shape (B, 3) with (black win, draw, white win) distributions.
+        legal_move_lists: List of lists of chess.Move objects per board.
+    """
+    x_batch = [encode_board(b) for b in boards]          # List[Tensor (8,8,21)]
+    x_batch = torch.stack(x_batch).float().to(device)    # (B, 8, 8, 21)
+
+    legal_moves, legal_move_lists = get_batch_legal_moves(boards) # (B, 64, L), [List[chess.Move]]
+    legal_moves = legal_moves.long().to(device)  # (B, 64, L)
+
+    with torch.no_grad():
+        model.eval()
+        x_out, move_pred = model(x_batch)                # (B, 65, H), (B, 64, 7)
+        prob_eval = get_eval_prob(model, x_out, device=out_device) # (B, 3)
+        probs = get_move_probs(move_pred, legal_moves, device=out_device) # (B, L)
+
+    # Debugging
+    assert probs.shape[0] == len(boards) == len(legal_move_lists)
+
+    return probs, prob_eval, legal_move_lists # (B, L), (B, 3), [List[chess.Move]]
+
+def predict3(model, board, device) -> Tuple[chess.Move, chess.Move, chess.Move, float]:
     """
     Predict the best move for a given board state using the provided model.
 

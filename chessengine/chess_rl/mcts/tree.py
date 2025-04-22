@@ -1,4 +1,3 @@
-# chess_rl/mcts/tree.py
 import numpy as np
 import math
 
