@@ -1,5 +1,8 @@
 import numpy as np
+import torch
 import math
+import chess
+from typing import Dict
 
 class Node:
     """Represents a node in the Monte Carlo Tree Search."""
@@ -76,3 +79,17 @@ class Node:
 
     def is_root(self):
         return self.parent is None
+    
+    def get_visit_distribution(self, temperature: float = 1.0) -> Dict[chess.Move, float]:
+        visit_counts = {action: child.n_visits for action, child in self.children.items()}
+        
+        if temperature == 0:
+            # Greedy — select the most visited move only
+            best_action = max(visit_counts, key=visit_counts.get)
+            return {move: 1.0 if move == best_action else 0.0 for move in visit_counts}
+        
+        counts = np.array(list(visit_counts.values()), dtype=np.float32)
+        counts = counts ** (1 / temperature)
+        probs = counts / counts.sum()
+
+        return visit_counts.keys(), torch.from_numpy(probs).float() # (legal_moves, pi)

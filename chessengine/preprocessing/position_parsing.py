@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from tqdm import tqdm
 import io
+from typing import List
 
 
 ########################################################################################
@@ -168,11 +169,14 @@ def compute_move_target(board, move):
 
     return move_target
 
-def generate_legal_move_tensor(board: chess.Board, ground_truth_move: chess.Move):
+def generate_legal_move_tensor(board: chess.Board, ground_truth_move: chess.Move, legal_moves = None):
     legal_move_tensors = []
     true_index = -1
 
-    for index, move in enumerate(board.legal_moves):
+    if legal_moves is None:
+        legal_moves = list(board.legal_moves)
+
+    for index, move in enumerate(legal_moves):
         move_tensor = torch.full((64,), -100, dtype=torch.int8)
 
         # From square becomes empty

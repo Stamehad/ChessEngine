@@ -1,121 +1,173 @@
-# chess_rl/self_play/game_simulator.py
 import chess
-import numpy as np
-import random
-import time
-import os
-from ..mcts.mcts import MCTS
+from typing import List, Optional, Tuple
+import torch
+from chessengine.chess_rl.simulator.simulator import Simulator
+from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
+from chessengine.model.utils import batch_legal_moves
+from chessengine.chess_rl.mcts.mcts import MCTS, BATCHED_MCTS
+
+def cat_pi_list(pi_list) -> torch.Tensor:
+        """
+        Arg:
+            pi_list: list of tensors of shape (T_i, L_i)
+        Return: 
+            a padded tensor of shape (T, L_max) where T = sum(T_i) and L_max = max(L_i)
+        """
+        L_max = max(pi.shape[-1] for pi in pi_list)
+        padded = []
+        for pi in pi_list:
+            T, L = pi.shape[0], pi.shape[-1]
+            if L < L_max:
+                pad = torch.zeros(T, L_max - L, dtype=pi.dtype)
+                pi = torch.cat([pi, pad], dim=-1) # (T, L_max)
+            padded.append(pi)
+        
+        return torch.cat(padded, dim=0)  # (T_max, L_max)
 
 class GameSimulator:
     def __init__(self, model, config):
         self.model = model
         self.config = config
-        self.mcts = MCTS(model, config)
+        #self.simulator = Simulator(model, device=config.get("device", "cuda"))
+    
+    def play_games(self, start_fens: List[Optional[str]]) -> List[Tuple[torch.Tensor, torch.Tensor, float]]:
+        """
+        Plays a batch of games using MCTS for self-play. Returns training tuples (X_t, π_t, z).
+        """
+        mcts = BATCHED_MCTS(self.model, self.config)
 
-    def _get_temperature(self, move_count):
-        """Get temperature based on move count."""
-        start_temp = self.config['mcts']['temperature_start']
-        end_temp = self.config['mcts']['temperature_end']
-        decay_moves = self.config['mcts']['temp_decay_moves']
+        all_data = []
+        boards = [chess.Board(fen=fen) if fen else chess.Board() for fen in start_fens]
+        games = Games.from_boards(boards)  # List[Game]
 
-        if move_count < decay_moves:
-            # Linear decay, could use exponential etc.
-            return start_temp - (start_temp - end_temp) * (move_count / decay_moves)
-        else:
-            return end_temp
+        # Remove finished games and get their data
+        finished = games.pop_finished()  # List[Game]
+        all_data.extend(finished.extract_finished_data())
+        del finished
 
-    def _select_move(self, policy_target, temperature):
-        """Selects a move based on the policy target distribution."""
-        moves = list(policy_target.keys())
-        probabilities = list(policy_target.values())
+        while games:
+            # 1. Run MCTS 
+            pis = mcts.run_mcts_search(games.get_boards()) # [(legal_moves, pi), ...]
 
-        if not moves:
-            return None # No legal moves
+            # 2. Log data before making the move
+            games.log_policies(pis)
 
-        if temperature == 0: # Deterministic selection
-            best_move_index = np.argmax(probabilities)
-            return moves[best_move_index]
-        else:
-            # Sample according to probabilities (adjusted by temperature implicitly in policy_target)
-            # Ensure probabilities sum to 1 (might have float inaccuracies)
-            prob_sum = sum(probabilities)
-            if abs(prob_sum - 1.0) > 1e-6:
-                 probabilities = [p / prob_sum for p in probabilities] # Normalize
+            # 3. Sample π and play moves
+            move_idx = [(moves, torch.multinomial(pi, 1).item()) for moves, pi in pis]
+            moves = [moves[idx] for moves, idx in move_idx]  
+            games.push(moves)  # Push moves to games
 
-            # Add small epsilon to handle potential zero probabilities if needed after filtering
-            # probabilities = [p + 1e-9 for p in probabilities]
-            # probabilities = [p / sum(probabilities) for p in probabilities]
+            # 4. Process finished games
+            finished = games.pop_finished()  # List[Game]
+            all_data.extend(finished.extract_finished_data())  # List[Tuple[X, Pi, z]]
+            del finished
+            
+        return self._stack_data(all_data)
+    
+    def _stack_data(self, data):
+        """
+        Stack the data from multiple games into a single batch.
+        """
+        x_list, pi_list, moves_list, z_list = zip(*data) 
+        x = torch.cat(x_list, dim=0) # (B, 8, 8, 21)
+        pi = cat_pi_list(pi_list) # (B, L_max)
+        lm = batch_legal_moves(moves_list, NO_BATCH_DIM=False) # (B, 64, L_max)
+        z = torch.cat(z_list, dim=0) # (B,)
+        return x, pi, lm, z
+            
+class Game:
+    def __init__(self, idx: int, board: chess.Board):
+        self.idx = idx
+        self.board = board
+        self.history = []  # List[Tuple[x_t, π_t]]
+        self.outcome = None  # int (0/1/2) or None
+        self.is_active = True
 
-            try:
-                selected_move = np.random.choice(moves, p=probabilities)
-                return selected_move
-            except ValueError as e:
-                 print(f"Error sampling move: {e}")
-                 print(f"Moves: {moves}")
-                 print(f"Probabilities: {probabilities}")
-                 # Fallback: choose uniformly or deterministically
-                 return moves[np.argmax(probabilities)]
+        if board.is_game_over():
+            self.outcome = self._get_outcome(board)
+            self.is_active = False
 
+    def log_policy(self, pi: torch.Tensor, moves: List[chess.Move]): # pi: Tensor (L,)
+        # Sanity check
+        assert len(pi) == len(moves), f"Mismatch: pi has shape {pi.shape}, but {len(moves)} moves given"
+        
+        x = self._get_positions() # (8, 8, 21)
+        legal_moves = self._get_move_tensor(moves) # (64, L)
+        self.history.append((x, pi, legal_moves)) # (x_t, π_t, legal_moves_tensor)
 
-    def play_game(self, start_fen=None):
-        """Plays a single game of self-play."""
-        board = chess.Board(fen=start_fen) if start_fen else chess.Board()
-        game_history = [] # Stores (state_repr, policy_target, current_player_turn)
-        move_count = 0
+    def push(self, move: chess.Move):
+        self.board.push(move)
+        if self.board.is_game_over():
+            self.outcome = self._get_outcome(self.board)
+            self.is_active = False
 
-        while not board.is_game_over() and move_count < self.config['self_play']['max_game_length']:
-            start_time = time.time()
+    def is_done(self) -> bool:
+        return self.board.is_game_over()
 
-            # 1. Run MCTS simulations
-            num_sims = self.config['mcts']['num_simulations']
-            policy_target = self.mcts.run_simulations(board.copy(), num_sims) # Pass copy
+    def finish(self, z: int):
+        self.outcome = z
 
-            if not policy_target: # No legal moves found by MCTS (should match board.is_game_over typically)
-                print("Warning: MCTS returned empty policy. Game should be over.")
-                break
+    def get_history(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Add terminal state to history
+        self.log_policy(torch.zeros(0), []) 
 
-            # 2. Store data for training
-            # Convert board state to the representation your model expects
-            # This MUST match mcts._preprocess_state (without batch dim usually)
-            state_representation = self.mcts._preprocess_state(board).squeeze(0).cpu().numpy() # Example
-            current_player = 1 if board.turn == chess.WHITE else -1 # White = 1, Black = -1
+        # Stack history
+        x_list, pi_list, legal_moves_list = zip(*self.history)
+        x = torch.stack(x_list)  # (T, 8, 8, 21)
+        pi = self._pad_pis(pi_list) # (T, L_max)
+        lm = batch_legal_moves(legal_moves_list) # (T, 64, L_max)
+        z = torch.tensor(self.outcome, dtype=torch.long).expand(x.shape[0])  # (T,)        
+        return x, pi, lm, z
 
-            # Store policy target keyed by move UCI string for serialization
-            policy_target_serializable = {move.uci(): prob for move, prob in policy_target.items()}
-            game_history.append((state_representation, policy_target_serializable, current_player))
-
-            # 3. Select and play move
-            temperature = self._get_temperature(move_count)
-            move = self._select_move(policy_target, temperature)
-
-            if move is None:
-                 print("Warning: No move selected. Breaking game loop.")
-                 break # Should not happen if policy_target is valid
-
-            board.push(move)
-            move_count += 1
-            # print(f"Move {move_count}: {move.uci()}, Sims: {num_sims}, Temp: {temperature:.2f}, Time: {time.time()-start_time:.2f}s")
-
-
-        # 4. Determine game outcome
+    def _pad_pis(self, pi_list: list) -> torch.Tensor:
+        max_len = max(pi.shape[0] for pi in pi_list)
+        padded = [torch.cat([pi, torch.zeros(max_len - pi.shape[0])]) for pi in pi_list]
+        return torch.stack(padded)
+    
+    def _get_outcome(self, board: chess.Board) -> int:
         outcome = board.outcome()
-        if outcome:
-            if outcome.winner == chess.WHITE:
-                z = 1.0
-            elif outcome.winner == chess.BLACK:
-                z = -1.0
-            else: # Draw
-                z = 0.0
-        else: # Draw by other means (e.g., max length)
-            z = 0.0
-        print(f"Game finished in {move_count} moves. Outcome: {board.result()} (z={z})")
+        if outcome.winner is None:
+            return 1
+        elif outcome.winner == chess.WHITE:
+            return 2
+        else:
+            return 0
+        
+    def _get_positions(self) -> torch.Tensor:
+        return encode_board(self.board) # (8, 8, 21) 
+    
+    def _get_move_tensor(self, moves) -> torch.Tensor:
+        lm_tensor, _ = generate_legal_move_tensor(self.board, ground_truth_move=None, legal_moves=moves) # (64, L)
+        return lm_tensor # (64, L)
 
 
-        # 5. Prepare final training data: (state, policy_target, outcome_z)
-        training_data = []
-        for state_repr, pi_target, player_turn in game_history:
-            # Value target is the final outcome z, from the perspective of the player whose turn it was
-            value_target = z * player_turn
-            training_data.append((state_repr, pi_target, value_target))
+# Batch-wise wrapper for multiple games
+class Games:
+    def __init__(self, games: List[Game]):
+        self.games = games
 
-        return training_data
+    @classmethod
+    def from_boards(cls, boards: List[chess.Board]) -> 'Games':
+        return cls([Game(idx=i, board=b) for i, b in enumerate(boards)])
+
+    def __len__(self):
+        return len(self.games)
+
+    def get_boards(self) -> List[chess.Board]:
+        return [g.board for g in self.games]
+
+    def log_policies(self, pis):
+        for game, (pi, moves) in zip(self.games, pis):
+            game.log_policy(pi, moves)
+
+    def push(self, moves: List[chess.Move]):
+        for game, move in zip(self.games, moves):
+            game.push(move)
+
+    def pop_finished(self) -> 'Games':
+        finished = [g for g in self.games if not g.is_active]
+        self.games = [g for g in self.games if g.is_active]
+        return Games(finished)
+
+    def extract_finished_data(self) -> List[Tuple[torch.Tensor, torch.Tensor, float]]:
+        return [g.get_history() for g in self.games if not g.is_active]
