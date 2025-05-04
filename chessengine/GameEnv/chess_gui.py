@@ -11,7 +11,9 @@ import yaml
 
 from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
 from chessengine.model.engine_pl import ChessLightningModule
-from chessengine.model.prediction import predict3
+from chessengine.chess_rl.mcts.mcts import BATCHED_MCTS
+from chessengine.chess_rl.beam_search.beam import BEAM
+from chessengine.model.prediction import predict3, mcts_predict
 
 # --- Constants ---
 SCREEN_WIDTH = 800
@@ -48,6 +50,10 @@ LegalMove = Any
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 # get the checkpoint path from the file checkpoint.txt
 
+##################################
+# LOAD CHECKPOINT AND CONFIGS
+##################################
+
 load_dotenv()
 CHECKPOINT_PATH = os.getenv("BASE_MODEL")
 
@@ -55,9 +61,28 @@ CHECKPOINT_PATH = os.getenv("BASE_MODEL")
 with open("engine_config.yaml", 'r') as f:
     config = yaml.safe_load(f)
 
+rl_config = {
+            'mcts':{"num_simulations": 50, "cpuct": 1.0, "temperature_start": 1.0,},
+            'beam_search': {"depth": 5, "width": 5},
+        }
+USE_MCTS = True # Set to True to use MCTS, False for greedy policy
+USE_BEAM = False # Set to True to use Beam Search, False for greedy policy
+
+##################################
+# GET MODEL
+##################################
+        
 model = ChessLightningModule.load_from_checkpoint(CHECKPOINT_PATH, config=config)
 model.eval() # Set model to evaluation mode
 model.to(device)
+
+##################################
+# MCTS
+##################################
+if USE_MCTS:
+    mcts = BATCHED_MCTS(model, rl_config)
+elif USE_BEAM:
+    beam = BEAM(model, rl_config)
 
 def prepare_features(board: chess.Board) -> Tuple[np.ndarray, List[LegalMove]]:
     """
@@ -85,7 +110,10 @@ def evaluate_position(board: chess.Board) -> Tuple[float, List[chess.Move]]:
     - A list of top 3 move suggestions (as python-chess Move objects), sorted by model preference
     """
     print("--- Evaluating Position ---")
-    move1, move2, move3, p1, p2, p3, prob_eval = predict3(model, board ,device) # Get eval score from model
+    if USE_MCTS:
+        move1, move2, move3, p1, p2, p3, prob_eval = mcts_predict(model, board, mcts ,device) # Get eval score from model
+    else:
+        move1, move2, move3, p1, p2, p3, prob_eval = predict3(model, board ,device) # Get eval score from model
 
     return prob_eval, [move1, move2, move3], [p1, p2, p3]
 
@@ -94,7 +122,10 @@ def get_best_move(board: chess.Board) -> Optional[chess.Move]:
     Returns the best move (as a python-chess Move object)
     """
     print("--- Getting Best Move ---")
-    m1, m2, m3, p1, p2, p3, _ = predict3(model, board, device) # Get eval score from model
+    if USE_MCTS:
+        m1, m2, m3, p1, p2, p3, _ = mcts_predict(model, board, mcts ,device)
+    else:
+        m1, m2, m3, p1, p2, p3, _ = predict3(model, board, device) # Get eval score from model
     return [m1, m2, m3], [p1, p2, p3]
 
 # --- GUI Class ---

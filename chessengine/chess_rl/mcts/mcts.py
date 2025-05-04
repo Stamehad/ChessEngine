@@ -1,10 +1,5 @@
-import torch
-import numpy as np
-import chess
-import math
-from .tree import Node
-from chessengine.model.prediction import predict, batch_predict
 from .search_tree import SearchForest
+from chessengine.model.utils import Timer
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,18 +20,23 @@ class BATCHED_MCTS:
         self.config = config 
         self.device = next(model.parameters()).device
         
-    def run_batched_mcts_search(self, boards):
+    def run_mcts_search(self, boards):
         num_simulations = self.config["mcts"]["num_simulations"]
         cpuct = self.config["mcts"]["cpuct"]
         temperature = self.config["mcts"]["temperature_start"]
 
         forest = SearchForest(boards, self.model) # search-trees for each board
+        #with Timer("Init: evaluate + expand root"):
         forest.evaluate_leaves()
         forest.expand_and_backprop()
 
         for _ in range(num_simulations):
+            #with Timer("Select leaves"):
             forest.select_leaves(cpuct)
+            #with Timer("Evaluate leaves"):
             forest.evaluate_leaves()
+            #with Timer("Expand and backprop"):
             forest.expand_and_backprop()
 
+        #with Timer("Extract policies"):
         return forest.get_policies(temperature) # [(legal_moves, pi), ...]

@@ -8,7 +8,8 @@ from chessengine.model.prediction import batch_predict
 class SearchTree:
     def __init__(self, board: chess.Board):
         self.board = board.copy()
-        self.root = Node(parent=None, prior_p=1.0, state=self.board)
+        self.white_to_move = board.turn
+        self.root = Node(parent=None, prior_p=1.0, board=self.board)
         self.leaf_node: Optional[Node] = self.root
         self.leaf_board: Optional[chess.Board] = self.board.copy()
         self.leaf_probs: Optional[torch.Tensor] = None
@@ -31,10 +32,12 @@ class SearchTree:
 
     def update_leaf(self, move_probs, value_probs, legal_moves):
         assert self.leaf_node is not None
+
+        sign = -1.0 if self.leaf_board.turn == chess.WHITE else 1.0
         if self.leaf_board.is_game_over():
-            self.leaf_value = self.get_outcome()
+            self.leaf_value = sign * self.get_outcome() 
         else:
-            self.leaf_value = value_probs[2].item() - value_probs[0].item()
+            self.leaf_value = sign * (value_probs[2].item() - value_probs[0].item())
         
         self.leaf_probs = move_probs # includes padding
         self.leaf_moves = legal_moves
@@ -82,4 +85,4 @@ class SearchForest:
             tree.expand_leaf()
 
     def get_policies(self, temperature: float):
-        return [tree.get_policy_dict(temperature) for tree in self.trees]
+        return [tree.get_policy(temperature) for tree in self.trees]

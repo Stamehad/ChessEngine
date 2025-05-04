@@ -4,9 +4,9 @@ import torch
 from chessengine.chess_rl.simulator.simulator import Simulator
 from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
 from chessengine.model.utils import pad_and_stack
-from chessengine.chess_rl.mcts.mcts import BATCHED_MCTS
+from chessengine.chess_rl.beam_search.beam import BEAM
 
-class GameSimulator:
+class BeamGameSimulator:
     def __init__(self, model, config):
         self.model = model
         self.config = config
@@ -17,7 +17,7 @@ class GameSimulator:
         """
         if start_fens is None:
             start_fens = [None] * n_games
-        mcts = BATCHED_MCTS(self.model, self.config)
+        beam = BEAM(self.model, self.config['beam'])
 
         all_data = []
         boards = [chess.Board(fen=fen) if fen else chess.Board() for fen in start_fens]
@@ -30,19 +30,20 @@ class GameSimulator:
 
         while games:
             # 1. Run MCTS 
-            pis = mcts.run_mcts_search(games.get_boards()) # [(legal_moves, pi), ...]
+            moves_list, _ = beam.run_beam_search(games.get_boards()) 
+            moves_list = list(map(list, zip(*moves_list)))
+            #print(f"Moves: {moves_list}")  # Debugging output
 
             # 2. Log data before making the move
-            games.log_policies(pis)
+            games.log_policies(moves_list[0])  # Log moves and policies
 
             # 3. Sample π and play moves
-            move_idx = [(moves, torch.multinomial(pi, 1).item()) for moves, pi in pis]
-            moves = [moves[idx] for moves, idx in move_idx]  
-            games.push(moves)  # Push moves to games
+            for moves in moves_list:
+                games.push(moves)  # Push moves to games
 
             # 4. Process finished games
             finished = games.pop_finished()  # List[Game]
-            all_data.extend(finished.extract_finished_data())  # List[Tuple[X, Pi, z]]
+            all_data.extend(finished.extract_finished_data()) 
             del finished
             
         return self._stack_data(all_data)
@@ -51,18 +52,18 @@ class GameSimulator:
         """
         Stack the data from multiple games into a single batch.
         """
-        x_list, pi_list, moves_list, z_list = zip(*data) 
+        x_list, moves_list, true_idx_list, z_list = zip(*data) 
         x = torch.cat(x_list, dim=0) # (B, 8, 8, 21)
-        pi = pad_and_stack(pi_list, BATCH_DIM=True) # (B, L_max)
         lm = pad_and_stack(moves_list, BATCH_DIM=True, pad_value=-100) # (B, 64, L_max)
+        true_idx = torch.cat(true_idx_list, dim=0) # (B,)
         z = torch.cat(z_list, dim=0) # (B,)
-        return x, pi, lm, z
+        return x, lm, true_idx, z
             
 class Game:
     def __init__(self, idx: int, board: chess.Board):
         self.idx = idx
         self.board = board
-        self.history = []  # List[Tuple[x_t, π_t]]
+        self.history = []  # List of tuples (x_t, legal_moves_tensor, true_idx)
         self.outcome = None  # int (0/1/2) or None
         self.is_active = True
 
@@ -70,19 +71,17 @@ class Game:
             self.outcome = self._get_outcome(board)
             self.is_active = False
 
-    def log_policy(self, moves: List[chess.Move], pi: torch.Tensor): # pi: Tensor (L,)
-        # Sanity check
-        assert len(pi) == len(moves), f"Mismatch: pi has shape {pi.shape}, but {len(moves)} moves given"
-        
+    def log_policy(self, move: chess.Move): 
         x = self._get_positions() # (8, 8, 21)
-        legal_moves = self._get_move_tensor(moves) # (64, L)
-        self.history.append((x, pi, legal_moves)) # (x_t, π_t, legal_moves_tensor)
+        legal_moves, true_idx = self._get_move_tensor(move) # (64, L)
+        self.history.append((x, legal_moves, true_idx)) # (x_t, legal_moves_tensor, true_idx)
 
     def push(self, move: chess.Move):
-        self.board.push(move)
-        if self.board.is_game_over():
-            self.outcome = self._get_outcome(self.board)
-            self.is_active = False
+        if move is not None:
+            self.board.push(move)
+            if self.board.is_game_over():
+                self.outcome = self._get_outcome(self.board)
+                self.is_active = False
 
     def is_done(self) -> bool:
         return self.board.is_game_over()
@@ -92,15 +91,15 @@ class Game:
 
     def get_history(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         # Add terminal state to history
-        self.log_policy([], torch.zeros(0)) 
+        self.log_policy(None) 
 
         # Stack history
-        x_list, pi_list, legal_moves_list = zip(*self.history)
+        x_list, legal_moves_list, true_idx_list = zip(*self.history)
         x = torch.stack(x_list)  # (T, 8, 8, 21)
-        pi = pad_and_stack(pi_list) # (T, L_max)
         lm = pad_and_stack(legal_moves_list, pad_value=-100) # (T, 64, L_max)
+        true_idx = torch.tensor(true_idx_list).long()  # (T,)
         z = torch.tensor(self.outcome, dtype=torch.int8).expand(x.shape[0])  # (T,)        
-        return x, pi, lm, z
+        return x, lm, true_idx, z
 
     def _get_outcome(self, board: chess.Board) -> int:
         outcome = board.outcome()
@@ -114,9 +113,9 @@ class Game:
     def _get_positions(self) -> torch.Tensor:
         return encode_board(self.board) # (8, 8, 21) 
     
-    def _get_move_tensor(self, moves) -> torch.Tensor:
-        lm_tensor, _ = generate_legal_move_tensor(self.board, ground_truth_move=None, legal_moves=moves)
-        return lm_tensor # (64, L)
+    def _get_move_tensor(self, move) -> torch.Tensor:
+        lm_tensor, true_idx = generate_legal_move_tensor(self.board, ground_truth_move=move)
+        return lm_tensor, true_idx # (64, L), float
 
 
 # Batch-wise wrapper for multiple games
@@ -134,9 +133,10 @@ class Games:
     def get_boards(self) -> List[chess.Board]:
         return [g.board for g in self.games]
 
-    def log_policies(self, pis):
-        for game, (moves, pi) in zip(self.games, pis):
-            game.log_policy(moves, pi)
+    def log_policies(self, moves):
+        assert len(moves) == len(self.games), "Number of moves must match number of games."
+        for game, move in zip(self.games, moves):
+            game.log_policy(move)
 
     def push(self, moves: List[chess.Move]):
         for game, move in zip(self.games, moves):

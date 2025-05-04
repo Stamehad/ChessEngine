@@ -56,3 +56,79 @@ def batch_legal_moves(legal_moves_list: List[torch.Tensor], NO_BATCH_DIM=True) -
     mask = (padded_legal_moves != -100).any(dim=1)  # shape: (B, L_max)
     
     return padded_legal_moves, mask  # (B, 64, L_max), (B, L_max)
+
+def pad_and_stack(tensor_list, BATCH_DIM=False, pad_value=0.0) -> torch.Tensor:
+    """
+    Args:
+        tensor_list: list of tensors of shape (..., L_i) 
+        BATCH_DIM: if True, tensors are of shape (B_i, ..., L_i)
+        pad_value: value to use for padding (default is 0.0)
+    Returns: 
+        a padded tensor of shape (B, ..., L_max) where L_max = max(L_i)
+        if BATCH_DIM is True, B = sum(B_i)
+    """
+    if not BATCH_DIM:
+        tensor_list = [t.unsqueeze(0) for t in tensor_list]
+    
+    L_max = max(t.shape[-1] for t in tensor_list)
+
+    padded = []
+    for t in tensor_list:
+        l = t.shape[-1]
+        if l < L_max:
+            pad_shape = t.shape[:-1] + (L_max - l,)
+            pad = torch.full(pad_shape, fill_value=pad_value, dtype=t.dtype, device=t.device)
+            t = torch.cat([t, pad], dim=-1) # (B_i, ..., L_max)
+        padded.append(t)
+    
+    return torch.cat(padded, dim=0)  # (B_max, ..., L_max)
+
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+class Timer:
+    def __init__(self, name):
+        self.name = name
+        self.start = None
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        duration = time.perf_counter() - self.start
+        print(f"[Timer] {self.name}: {duration:.4f} seconds")
+        
+
+def compute_topk_coverage(move_probs: torch.Tensor, max_k: int = 10) -> torch.Tensor:
+    """
+    Compute cumulative coverage of top-k moves from a batched move probability distribution.
+
+    Args:
+        move_probs: Tensor of shape (B, L) with move probabilities (sum to 1 per batch).
+        max_k: Maximum number of top moves to consider (default: 10).
+
+    Returns:
+        Tensor of shape (B, max_k) where each element is the cumulative probability
+        of the top-k moves per batch. Saturates at 1.0 if fewer than max_k moves exist.
+    """
+    B, L = move_probs.shape
+    k = min(max_k, L)
+
+    # Sort move probabilities in descending order along last dimension
+    sorted_probs, _ = torch.sort(move_probs, descending=True, dim=1)  # (B, L)
+
+    # Compute cumulative sum along last dimension
+    cumsum = torch.cumsum(sorted_probs, dim=1)  # (B, L)
+
+    if k < max_k:
+        # Pad cumsum with last valid value to reach max_k length
+        last_vals = cumsum[:, k-1].unsqueeze(1)  # (B, 1)
+        pad_size = max_k - k
+        pad = last_vals.expand(B, pad_size)  # (B, pad_size)
+        coverage = torch.cat([cumsum[:, :k], pad], dim=1)  # (B, max_k)
+    else:
+        coverage = cumsum[:, :max_k]  # (B, max_k)
+
+    return coverage

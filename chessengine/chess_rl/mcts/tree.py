@@ -2,14 +2,15 @@ import numpy as np
 import torch
 import math
 import chess
-from typing import Dict
+from typing import Dict, List, Tuple
 
 class Node:
     """Represents a node in the Monte Carlo Tree Search."""
-    def __init__(self, parent, prior_p, state):
+    def __init__(self, parent, prior_p, board):
         self.parent = parent
         self.children = {}  # Map from action (move) to Node
-        self.state = state  # Board state associated with this node
+        self.board = board  # Board state associated with this node
+        self.white_to_move = board.turn # True if it's white's turn to move
 
         self.n_visits = 0      # N(s, a): Visit count for edge leading to this node
         self.q_value = 0.0     # Q(s, a): Mean action value for edge leading to this node
@@ -28,7 +29,7 @@ class Node:
                 # Cloning the board is important!
                 next_board = board.copy()
                 next_board.push(action)
-                self.children[action] = Node(parent=self, prior_p=prob, state=next_board)
+                self.children[action] = Node(parent=self, prior_p=prob, board=next_board)
 
     def select_child(self, cpuct):
         """Select the child node with the highest UCB score."""
@@ -80,16 +81,22 @@ class Node:
     def is_root(self):
         return self.parent is None
     
-    def get_visit_distribution(self, temperature: float = 1.0) -> Dict[chess.Move, float]:
-        visit_counts = {action: child.n_visits for action, child in self.children.items()}
-        
+    def get_visit_distribution(self, temperature: float = 1.0) -> Tuple[List[chess.Move], torch.Tensor]:
+        visit_counts = [(action, child.n_visits) for action, child in self.children.items()]
+
+        if not visit_counts:
+            return [], torch.tensor([])
+
         if temperature == 0:
             # Greedy — select the most visited move only
-            best_action = max(visit_counts, key=visit_counts.get)
-            return {move: 1.0 if move == best_action else 0.0 for move in visit_counts}
-        
-        counts = np.array(list(visit_counts.values()), dtype=np.float32)
+            best_action, _ = max(visit_counts, key=lambda x: x[1])
+            return [action for action, _ in visit_counts], torch.tensor([
+                1.0 if action == best_action else 0.0 for action, _ in visit_counts
+            ])
+
+        moves, counts = zip(*visit_counts)
+        counts = np.array(counts, dtype=np.float32)
         counts = counts ** (1 / temperature)
         probs = counts / counts.sum()
 
-        return visit_counts.keys(), torch.from_numpy(probs).float() # (legal_moves, pi)
+        return list(moves), torch.from_numpy(probs).float()

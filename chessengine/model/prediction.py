@@ -153,6 +153,8 @@ def batch_predict(model, boards: List[chess.Board], device="cuda", out_device="c
         prob_eval: Tensor of shape (B, 3) with (black win, draw, white win) distributions.
         legal_move_lists: List of lists of chess.Move objects per board.
     """
+    if isinstance(boards, chess.Board):
+        boards = [boards]
     x_batch = [encode_board(b) for b in boards]          # List[Tensor (8,8,21)]
     x_batch = torch.stack(x_batch).float().to(device)    # (B, 8, 8, 21)
 
@@ -160,6 +162,7 @@ def batch_predict(model, boards: List[chess.Board], device="cuda", out_device="c
     legal_moves = legal_moves.long().to(device)  # (B, 64, L)
 
     with torch.no_grad():
+        model.to(device)
         model.eval()
         x_out, move_pred = model(x_batch)                # (B, 65, H), (B, 64, 7)
         prob_eval = get_eval_prob(model, x_out, device=out_device) # (B, 3)
@@ -219,3 +222,58 @@ def predict3(model, board, device) -> Tuple[chess.Move, chess.Move, chess.Move, 
 
     return move1, move2, move3, p1, p2, p3, prob_eval
 
+def mcts_predict(model, board, mcts, device="mps", out_device="cpu"):
+    """
+    Use MCTS to predict the best moves for a given board state.
+
+    Args:
+        model: The trained chess model.
+        board: The current state of the chess board.
+        mcts: The MCTS object initialized with the model.
+        device: Device for inference ("cuda", "mps", "cpu").
+        out_device: Where to place outputs.
+
+    Returns:
+        A tuple containing the predicted top 3 moves and the predicted evaluation.
+    """
+
+     # Convert the board to a tensor and add a batch dimension
+    x = encode_board(board).unsqueeze(0).float().to(device) # (1, 8, 8, 21)
+
+    legal_moves, _ = generate_legal_moves(board) # (64, L)
+    legal_moves = legal_moves.unsqueeze(0).long().to(device)  # (1, 64, L) 
+
+    # Get the model's predictions
+    with torch.no_grad():
+        model.eval()
+        x_out, _ = model(x) # (1, 65, H), (1, 64, 7)
+        prob_eval = get_eval_prob(model, x_out, device="cpu") # (3,)
+
+    # Run MCTS search
+    pis = mcts.run_mcts_search([board])  # policies: List[Dict[chess.Move, prob]], evals: Tensor (B, 3)
+    legal_moves, pi = pis[0] 
+    num_moves = len(legal_moves)
+    k = 3
+    if num_moves < 3:
+        k = num_moves
+
+    p, idx = torch.topk(pi, k=k)
+    
+    move1 = move2 = move3 = None 
+    p1 = p2 = p3 = None
+    if num_moves == 1:
+        move1 = legal_moves[0]
+        p1 = p[0]
+    elif num_moves == 2:
+        move1 = legal_moves[idx[0]]
+        move2 = legal_moves[idx[1]]
+        p1 = p[0]
+        p2 = p[1]
+    else:
+        p, idx = torch.topk(pi, k=3)
+        move1 = legal_moves[idx[0]]
+        move2 = legal_moves[idx[1]]
+        move3 = legal_moves[idx[2]]
+        p1, p2, p3 = p[0], p[1], p[2]
+
+    return move1, move2, move3, p1, p2, p3, prob_eval
