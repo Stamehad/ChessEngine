@@ -91,7 +91,7 @@ def get_batch_legal_moves(boards: List[chess.Board]) -> Tuple[torch.Tensor, List
 def get_eval_prob(model, x_out: torch.Tensor, device = "cpu") -> torch.Tensor:
     eval = model.loss_module.prob_eval_loss.head(x_out) # (B, 3)
     prob_eval = torch.nn.functional.softmax(eval, dim=-1)  # (B, 3)
-    prob_eval = prob_eval.to(device)  # Convert to CPU for easier handling
+    prob_eval = prob_eval.detach().to(device)  # Convert to CPU for easier handling
 
     return prob_eval # (B, 3)
 
@@ -106,7 +106,7 @@ def get_move_probs(move_pred: torch.Tensor, legal_moves: torch.Tensor, device="c
     move_logits = move_logits.sum(dim=1) / mask.sum(dim=1).clamp(min=1)  # (B, L)
     move_logits = move_logits.masked_fill(~legal_moves_mask, float('-inf'))
 
-    move_logits = move_logits.to(device)
+    move_logits = move_logits.detach().to(device)
     probs = torch.nn.functional.softmax(move_logits, dim=-1) # (B, L)
 
     return probs # (B, L)
