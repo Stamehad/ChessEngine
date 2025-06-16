@@ -1,19 +1,19 @@
 import pygame
-import chess
-import chess.svg
+import chess # type: ignore
+import chess.svg # type: ignore
 import sys
 import numpy as np
 from typing import List, Tuple, Optional, Any # Use Any for the custom LegalMove format initially
 import torch
 from dotenv import load_dotenv
 import os
-import yaml
+import yaml # type: ignore
 
-from chessengine.preprocessing.position_parsing import encode_board, generate_legal_move_tensor
-from chessengine.model.engine_pl import ChessLightningModule
-from chessengine.chess_rl.mcts.mcts import BATCHED_MCTS
-from chessengine.chess_rl.beam_search.beam import BEAM
-from chessengine.model.prediction import predict3, mcts_predict
+from preprocessing.position_parsing import encode_board, generate_legal_move_tensor
+from model.engine_pl import ChessLightningModule
+from chess_rl.mcts.mcts import BATCHED_MCTS
+from chess_rl.beam_search.beam import BEAM
+from model.prediction import predict3, mcts_predict
 
 # --- Constants ---
 SCREEN_WIDTH = 800
