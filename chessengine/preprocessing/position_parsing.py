@@ -1,4 +1,4 @@
-import chess.pgn
+import chess.pgn # type: ignore
 import torch
 import json
 from pathlib import Path

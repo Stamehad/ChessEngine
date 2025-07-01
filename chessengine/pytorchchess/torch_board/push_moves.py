@@ -194,11 +194,10 @@ class PushMoves:
         # print(f"self.state.castling = {self.state.castling}, castling_update = {castling_update}")
         #self.state.update_castling_rights(castling_update, mask)
         # print(f"Updated castling rights: {self.state.castling}")
-        valid_indices = torch.where(mask)[0]
-        self.state.castling[valid_indices, 0] &= ~ks_white
-        self.state.castling[valid_indices, 1] &= ~qs_white  
-        self.state.castling[valid_indices, 2] &= ~ks_black
-        self.state.castling[valid_indices, 3] &= ~qs_black
+        self.state.castling[mask, 0] &= ~ks_white[mask]
+        self.state.castling[mask, 1] &= ~qs_white[mask] 
+        self.state.castling[mask, 2] &= ~ks_black[mask]
+        self.state.castling[mask, 3] &= ~qs_black[mask]
 
     def push2(self, moves: torch.Tensor, board_idx: torch.Tensor = None): # -> "TorchBoard":
         device = self.device

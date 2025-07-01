@@ -1,6 +1,20 @@
 import torch
 from dataclasses import dataclass
 
+#=================================================================
+# HELPER FUNCTIONS: MASKED MAX/MIN
+#=================================================================
+def masked_max(tensor, mask, dim):
+    masked_tensor = tensor.masked_fill(mask, float('-inf'))
+    return torch.max(masked_tensor, dim=dim)
+
+def masked_min(tensor, mask, dim):
+    masked_tensor = tensor.masked_fill(mask, float('inf'))
+    return torch.min(masked_tensor, dim=dim)
+    
+#=================================================================
+# BEAM SEARCH STATE CLASS
+#=================================================================
 @dataclass
 class BeamSearchState:
     """Unified beam search state managing positions, evaluations, and moves"""
@@ -8,18 +22,18 @@ class BeamSearchState:
     # Core state tensors
     idx: torch.Tensor        # (B,) flat index into evaluation tensor
     game: torch.Tensor       # (B,) game index for each position  
-    stack: torch.Tensor      # (B,) stack/step index
+    layer: torch.Tensor      # (B,) current layer in search tree
     depth: torch.Tensor      # (B,) current depth in search tree  # RENAMED from layer
     
     # Configuration
-    num_games: int
+    G: int
     exp_f: torch.Tensor      # (D,) expansion factors [k0, k1, ..., kD-1]
+    D: int                   # Number of depth levels (length of exp_f)
+    L: int                   # Number of layers (D + 1), where D = len(exp_f)
     
     # Data storage tensors
-    evaluations: torch.Tensor  # (S, G, n0, n1, ..., nD-1) terminal evaluations
-    moves: torch.Tensor        # (S, D, G, n0, n1, ..., nD-1) moves at each position
-    eval_stacks: torch.Tensor  # (S,) which stacks have evaluations
-    move_stacks: torch.Tensor  # (S,) which stacks have moves
+    evaluations: torch.Tensor # (L, G * n0 * n1 * ... * nD-1) evaluations at each position
+    moves: torch.Tensor       # (L, D, G * n0 * n1 * ... * nD-1) moves at each position
     
     # Constants
     MOVE_PAD: int = 2**15
@@ -38,33 +52,71 @@ class BeamSearchState:
         """Stride between games in flattened evaluation tensor"""
         return self.exp_f.prod().item()
     
+    def __len__(self):
+        """Number of positions in the current state"""
+        return self.idx.size(0)
+    
     @classmethod
-    def create(cls, num_games, expansion_factors, device="cpu"):
-        """Factory method to create initial state"""
+    def initialize(cls, G, expansion_factors, device="cpu"):
+        """Initialize a new BeamSearchState with given parameters"""
         exp_f = expansion_factors.clone().to(device=device, dtype=torch.long)
-        
+        D = len(exp_f)  
+        L = D + 1  
+
         return cls(
-            # Initial positions (one per game at root)
-            idx=torch.zeros(num_games, dtype=torch.long, device=device),
-            game=torch.arange(num_games, dtype=torch.long, device=device), 
-            stack=torch.zeros(num_games, dtype=torch.long, device=device),
-            depth=torch.zeros(num_games, dtype=torch.long, device=device),
-            
-            # Config
-            num_games=num_games,
+            idx=torch.zeros(0, dtype=torch.long, device=device),
+            game=torch.zeros(0, dtype=torch.long, device=device),
+            layer=torch.zeros(0, dtype=torch.long, device=device), 
+            depth=torch.zeros(0, dtype=torch.long, device=device),
+
+            G=G,
             exp_f=exp_f,
-            
-            # Storage with initial capacity (size 1, like original Moves)
-            evaluations=torch.zeros((0, num_games, *exp_f), device=device),  # Keep 0 for evals
-            moves=torch.full((1, len(exp_f), num_games, *exp_f), cls.MOVE_PAD, device=device),  # Size 1!
-            eval_stacks=torch.zeros((0,), dtype=torch.long, device=device),  # Keep 0 for evals
-            move_stacks=torch.zeros((1,), dtype=torch.long, device=device),  # Size 1!
+            D=D,
+            L=L,
+
+            evaluations=torch.full((L, G, *exp_f), cls.EVAL_PAD, device=device).flatten(start_dim=1),  
+            moves=torch.full((L, D, G, *exp_f), cls.MOVE_PAD, device=device).flatten(start_dim=2), 
         )
     
+    def __getitem__(self, key):
+        """Index into position tensors"""
+        return BeamSearchState(
+            idx=self.idx[key],
+            game=self.game[key], 
+            layer=self.layer[key],
+            depth=self.depth[key],
+            G=self.G,
+            exp_f=self.exp_f,
+            D=self.D,
+            L=self.L,
+            evaluations=self.evaluations,  
+            moves=self.moves,              
+        )
+    
+    def __repr__(self):
+        """String representation of the BeamSearchState"""
+        return (f"BeamSearchState:\n"
+                f"  Idx:   {self.idx}\n" 
+                f"  Game:  {self.game}\n"
+                f"  Layer: {self.layer}\n" 
+                f"  Depth: {self.depth}\n"
+                )
+    
+    #==========================================================================
     # Position management
-    def expand_positions(self, move_indices, ks=None):
-        """Expand current positions by selected moves"""
-        #k = self.exp_f[self.depth]  # expansion factor per position
+    #==========================================================================
+    def add_new_layer(self, layer):
+        new_idx = torch.zeros(self.G, dtype=torch.long, device=self.idx.device)
+        new_game = torch.arange(self.G, dtype=torch.long, device=self.idx.device)
+        new_layer = torch.full((self.G,), layer, dtype=torch.long, device=self.idx.device)
+        new_depth = torch.full((self.G,), 0, dtype=torch.long, device=self.idx.device)
+
+        self.idx = torch.cat([self.idx, new_idx])
+        self.game = torch.cat([self.game, new_game])
+        self.layer = torch.cat([self.layer, new_layer])
+        self.depth = torch.cat([self.depth, new_depth])
+
+    def expand(self, move_indices, ks=None):
         k = self.exp_f[self.depth] if ks is None else ks
         
         # Repeat all position attributes 
@@ -72,52 +124,50 @@ class BeamSearchState:
         expanded.depth += 1
         
         # Update indices based on selected moves
-        if move_indices is not None:
-            exp_rep = expanded.exp_dim[expanded.depth]
-            idx_rep = self.idx.repeat_interleave(k)
-            expanded.idx = move_indices * exp_rep + idx_rep
+        exp_rep = expanded.exp_dim[expanded.depth]
+        expanded.idx += move_indices * exp_rep
             
         return expanded
     
-    def add_new_stack(self, stack_id):
-        """Add new root positions for next search iteration"""
-        new_positions = self.__class__.create(self.num_games, self.exp_f, device=self.idx.device)
-        new_positions.stack.fill_(stack_id)
-        new_positions.move_stacks.fill_(stack_id)  # Set the stack ID for the pre-allocated storage
-        return self + new_positions
+    def _repeat_interleave(self, repeats):
+        return BeamSearchState(
+            idx=self.idx.repeat_interleave(repeats),
+            game=self.game.repeat_interleave(repeats),
+            layer=self.layer.repeat_interleave(repeats),
+            depth=self.depth.repeat_interleave(repeats),
+            G=self.G,
+            exp_f=self.exp_f,
+            D=self.D,
+            L=self.L,
+            evaluations=self.evaluations,
+            moves=self.moves,
+        )
     
-    # Evaluation management  
-    def store_terminal_evaluations(self, position_mask, values):
+    #==========================================================================
+    # Evaluation and Move management  
+    #==========================================================================
+    def store_final_evaluations(self, batch_mask, values):
         """Store evaluations for terminal positions"""
-        flat_idx, stacks = self._compute_flat_indices(position_mask)
-        
-        # Create new evaluation tensor
-        new_evals = torch.zeros((1, self.num_games, *self.exp_f), device=values.device)
-        new_evals = new_evals.flatten(start_dim=1)  # (1, G*n0*n1*...*nD-1)
-        new_evals[0, flat_idx] = values
-        new_evals = new_evals.view(1, self.num_games, *self.exp_f)
-        
-        # Append to storage
-        self.evaluations = torch.cat([self.evaluations, new_evals], dim=0)
-        self.eval_stacks = torch.cat([self.eval_stacks, stacks.unique()], dim=0)
+        flat_idx, layer = self._compute_flat_indices(batch_mask)
+        self.evaluations[layer, flat_idx] = values
 
-        self._reduce_eval_stacks()  # Consolidate duplicate stacks if needed
-        
-    def store_early_terminated_evaluations(self, position_mask, values):
+    def store_early_evaluations(self, batch_mask, values):  
         """
         Store evaluations for positions that terminated early (checkmate/stalemate).
         For each early-terminated position, fills all descendant leaves with the terminal value.
         
         Args:
-            position_mask: (B,) boolean mask selecting early terminated positions
+            batch_mask: (B,) boolean mask selecting early terminated positions
             values: (N,) terminal values for the terminated positions  
         """
-        if not position_mask.any():
+        assert batch_mask.sum() == values.size(0), f"Mask size {batch_mask.sum()} doesn't match values size {values.size(0)}"
+        values = values.to(dtype=self.evaluations.dtype)
+        if not batch_mask.any():
             return
             
         # Get indices and info for terminated positions
-        flat_idx, stacks = self._compute_flat_indices(position_mask)
-        depths = self.depth[position_mask] 
+        flat_idx, layer = self._compute_flat_indices(batch_mask)
+        depths = self.depth[batch_mask] 
         N = flat_idx.size(0)  # Number of terminated positions
         
         # Calculate expansion dimensions for each terminated layer
@@ -125,48 +175,13 @@ class BeamSearchState:
         exp_max = exp_dim.max().item()
         
         # Create range tensor and mask for valid descendants
-        device = values.device
-        t = torch.arange(exp_max, device=device).expand(N, -1)  # (N, exp_max)
+        t = torch.arange(exp_max, device=values.device).expand(N, -1)  # (N, exp_max)
         mask = t < exp_dim.unsqueeze(1)  # (N, exp_max) - mask for valid descendants
         
         # Get indices for all valid descendants
-        idx0, idx1 = mask.nonzero(as_tuple=True)
-        flat_idx_expanded = flat_idx[idx0] + idx1  # Flat indices for all descendants
-        values_expanded = values[idx0]  # Corresponding values
+        idx0, idx1 = mask.nonzero(as_tuple=True) # (N_exp,), (N_exp,)
+        self.evaluations[layer[idx0], flat_idx[idx0] + idx1] = values[idx0]
         
-        # Create new evaluation tensor with N entries (one per terminated position)
-        new_evals = torch.zeros((N, self.num_games, *self.exp_f), device=device, dtype=values.dtype)
-        new_evals_flat = new_evals.view(N, -1)  # (N, G*n0*n1*...*nD-1)
-        new_evals_flat[idx0, flat_idx_expanded] = values_expanded
-        new_evals = new_evals_flat.view(N, self.num_games, *self.exp_f)
-        
-        # Append to storage
-        self.evaluations = torch.cat([self.evaluations, new_evals], dim=0)
-        self.eval_stacks = torch.cat([self.eval_stacks, stacks], dim=0)
-        
-        # Reduce/consolidate duplicate stacks if needed
-        self._reduce_eval_stacks()
-
-    def _reduce_eval_stacks(self):
-        """
-        Consolidate evaluations that belong to the same stack by summing them.
-        Similar to EvalStates.reduce_stack()
-        """
-        if len(self.eval_stacks) <= 1:
-            return
-        
-        unique_stacks, inverse_indices = torch.unique(self.eval_stacks, return_inverse=True)
-        
-        if len(unique_stacks) == len(self.eval_stacks):
-            return  # No duplicates
-        
-        # Sum evaluations for duplicate stacks
-        from torch_scatter import scatter
-        consolidated_evals = scatter(self.evaluations, inverse_indices, dim=0, reduce='sum')
-        
-        self.evaluations = consolidated_evals
-        self.eval_stacks = unique_stacks
-
     def store_moves(self, new_moves):
         """
         Store moves made from current positions after expansion.
@@ -175,25 +190,17 @@ class BeamSearchState:
         Args:
             new_moves: (B,) moves made from the expanded positions
         """
+        assert new_moves.shape[0] == len(self), f"new_moves size {new_moves.size(0)} doesn't match current batch size {len(self)}"
+
+        new_moves = new_moves.to(dtype=self.moves.dtype)
         B = new_moves.size(0)
-        
-        # Validation assertions
-        assert B == self.idx.size(0), f"new_moves size {B} doesn't match current batch size {self.idx.size(0)}"
-        assert torch.all(self.depth > 0), "store_moves() can only be called after expand_positions() (depth > 0)"  # CHANGED
-        assert new_moves.device == self.idx.device, f"Device mismatch: new_moves on {new_moves.device}, expected {self.idx.device}"
-        
         if B == 0:
             return
         
-        # Get current state
-        flat_idx, stacks = self._compute_flat_indices()
-        
-        # Normalize stacks
-        min_stack = self.move_stacks.min().item()
-        normalized_stacks = stacks - min_stack
+        flat_idx, layers = self._compute_flat_indices()
         
         # Vectorized expansion: for each move at layer l, fill all descendant slots
-        exp_dim = self.exp_dim[self.depth]  # CHANGED
+        exp_dim = self.exp_dim[self.depth]
         exp_max = exp_dim.max().item()
         
         # Create mask for valid expansions
@@ -203,106 +210,53 @@ class BeamSearchState:
         idx0, idx1 = mask.nonzero(as_tuple=True)
         
         # Expand indices and moves according to mask
-        expanded_stacks = normalized_stacks[idx0]
-        expanded_depths = self.depth[idx0] - 1
-        expanded_flat_idx = flat_idx[idx0] + idx1
-        expanded_moves = new_moves[idx0]
+        layers = layers[idx0]
+        depths = self.depth[idx0] - 1
+        flat_idx = flat_idx[idx0] + idx1
+        new_moves = new_moves[idx0]
         
         # Update moves tensor
-        self.moves = self.moves.flatten(start_dim=2)  # (S, D, G * n0 * n1 * ... * nD-1)
-        self.moves[expanded_stacks, expanded_depths, expanded_flat_idx] = expanded_moves
-        
-        # Reshape back to original structure
-        self.moves = self.moves.view(-1, len(self.exp_f), self.num_games, *self.exp_f)
-
+        self.moves[layers, depths, flat_idx] = new_moves
+    
+    #=========================================================================
     # Backpropagation
-    def backpropagate(self, stack_id, side=True):
+    #=========================================================================
+    def backpropagate(self, layer, side):
         """Backpropagate evaluations and return principal variation with target layer"""
         # Get evaluations for this stack
-        assert isinstance(stack_id, int), "stack_id must be an integer"
-        assert stack_id >= 0, "stack_id must be a non-negative integer"
-        stack_mask = self.eval_stacks == stack_id
-        if not stack_mask.any():
+        evals = self.evaluations[layer].view(self.G, *self.exp_f) # (G, n0, n1, ..., nD-1)
+        mask = evals == self.EVAL_PAD # Mask for invalid evals       
+        if mask.all():
             return None, None, None
-            
-        game_evals = self.evaluations[stack_mask].sum(dim=0)  # (G, n0, n1, ..., nD-1)
         
-        pv_values, pv_indices = self._minimax_backprop(game_evals, side)
+        pv_values, pv_indices = self._minimax_backprop(evals, mask, side)
         
         # Get corresponding moves
-        pv_moves = self._extract_pv_moves(stack_id, pv_indices)
+        pv_moves = self._extract_pv_moves(layer, pv_indices)
         
-        # Calculate target layer for PV application
-        D = len(self.exp_f)
-        target_layer = stack_id % (D + 1)
+        self.evaluations[layer] = self.EVAL_PAD  # Clear evaluations for this layer
         
-        # Clean up processed evaluations
-        self.evaluations = self.evaluations[~stack_mask]
-        self.eval_stacks = self.eval_stacks[~stack_mask]
-        
-        return pv_values, pv_moves, target_layer
+        return pv_values, pv_moves, layer
     
+    #==========================================================================
     # Utility methods
+    #==========================================================================
     def _compute_flat_indices(self, selection=None):
         """Your existing compute_flat_indices logic"""
         if selection is None:
             flat_idx = self.idx + self.game_stride * self.game
-            return flat_idx, self.stack
+            return flat_idx, self.layer
         
         selected_idx = self.idx[selection]
         selected_games = self.game[selection] 
         flat_idx = selected_idx + self.game_stride * selected_games
-        selected_stacks = self.stack[selection]
-        return flat_idx, selected_stacks
+        selected_layers = self.layer[selection]
+        return flat_idx, selected_layers
     
-    def _repeat_interleave(self, repeats):
-        """Create new state with positions repeated"""
-        return BeamSearchState(
-            idx=self.idx.repeat_interleave(repeats),
-            game=self.game.repeat_interleave(repeats),
-            stack=self.stack.repeat_interleave(repeats), 
-            depth=self.depth.repeat_interleave(repeats),
-            num_games=self.num_games,
-            exp_f=self.exp_f,
-            evaluations=self.evaluations,
-            moves=self.moves,
-            eval_stacks=self.eval_stacks,
-            move_stacks=self.move_stacks,
-        )
-    
-    # Standard dataclass operations
-    def __getitem__(self, key):
-        """Index into position tensors"""
-        return BeamSearchState(
-            idx=self.idx[key],
-            game=self.game[key], 
-            stack=self.stack[key],
-            depth=self.depth[key],
-            num_games=self.num_games,
-            exp_f=self.exp_f,
-            evaluations=self.evaluations,  # Shared
-            moves=self.moves,              # Shared  
-            eval_stacks=self.eval_stacks,  # Shared
-            move_stacks=self.move_stacks,  # Shared
-        )
-    
-    def __add__(self, other):
-        """Concatenate position tensors"""
-        return BeamSearchState(
-            idx=torch.cat([self.idx, other.idx]),
-            game=torch.cat([self.game, other.game]),
-            stack=torch.cat([self.stack, other.stack]),
-            depth=torch.cat([self.depth, other.depth]),
-            num_games=self.num_games,
-            exp_f=self.exp_f,
-            # Merge storage tensors
-            evaluations=torch.cat([self.evaluations, other.evaluations], dim=0),
-            moves=torch.cat([self.moves, other.moves], dim=0),
-            eval_stacks=torch.cat([self.eval_stacks, other.eval_stacks]),
-            move_stacks=torch.cat([self.move_stacks, other.move_stacks]),
-        )
-    
-    def _minimax_backprop(self, game_evals, side=True):
+    #==========================================================================
+    # Backprop helper functions
+    #==========================================================================
+    def _minimax_backprop(self, evals, mask, side):
         """
         Perform minimax backpropagation on game evaluations.
         
@@ -315,30 +269,28 @@ class BeamSearchState:
             pv_indices: (G, D) principal variation indices for each depth
         """
         D = self.exp_f.shape[0]
-        g = game_evals.shape[0]
+        G = evals.shape[0]
         
         # Handle side parameter - convert to tensor if needed
-        if isinstance(side, bool):
-            side_tensor = torch.full((g,), side, dtype=torch.bool, device=game_evals.device)
-        else:
-            side_tensor = side.to(device=game_evals.device, dtype=torch.bool)
-            assert side_tensor.shape == (g,), f"side tensor must have shape ({g},), got {side_tensor.shape}"
+        side = side.to(dtype=torch.bool)
+        assert side.shape == (G,), f"side tensor must have shape ({G},), got {side.shape}"
         
         # Shape current_side to broadcast with game_evals: (G, 1, 1, ..., 1)
-        dims_to_add = game_evals.dim() - 2  # D - 1
-        current_side = side_tensor.view(g, *([1] * dims_to_add))
+        dims_to_add = evals.dim() - 2  # D - 1
+        current_side = side.view(G, *([1] * dims_to_add))
         
         best_idx = []
         for k in range(D):
             # Compute both max and min for all positions
-            max_vals, max_idx = torch.max(game_evals, dim=-1)  # (G, n0, ..., nD-k-2)
-            min_vals, min_idx = torch.min(game_evals, dim=-1)  # (G, n0, ..., nD-k-2)
+            max_vals, max_idx = masked_max(evals, mask, dim=-1)  # (G, n0, ..., nD-k-2)
+            min_vals, min_idx = masked_min(evals, mask, dim=-1)  # (G, n0, ..., nD-k-2)
             
             # Select values and indices based on current_side for each game
-            game_evals = torch.where(current_side, max_vals, min_vals)
+            evals = torch.where(current_side, max_vals, min_vals)
             idx = torch.where(current_side, max_idx, min_idx)
             
             best_idx.append(idx)
+            mask = mask.all(dim=-1)
             
             # Flip sides and remove the last dimension for next iteration
             current_side = ~current_side.squeeze(-1)  # Remove one dimension and flip
@@ -346,7 +298,7 @@ class BeamSearchState:
         # Unravel the PV path to get indices for each depth
         pv_indices = self._unravel_pv_path(best_idx)
         
-        return game_evals, pv_indices  # (G,), (G, D)
+        return evals, pv_indices  # (G,), (G, D)
 
     def _unravel_pv_path(self, best_idx):
         """
@@ -364,14 +316,14 @@ class BeamSearchState:
             pv_idx: (G, D) tensor, so that pv_idx[i] = (i0, ..., iD-1) is the PV for game i.
         """
         D = len(best_idx)
-        g = self.num_games
-        pv_idx = torch.zeros((g, D), dtype=torch.long, device=best_idx[-1].device) # (G, D)
-
+        pv_idx = torch.zeros((self.G, D), dtype=torch.long, device=best_idx[-1].device) # (G, D)
+        # print(f"best_idx: {[b.shape for b in best_idx]}")  # Debugging output
+        # print(best_idx)
         for d in range(D): 
-            idx_d = best_idx[-d-1] # (G, n0, ..., nl-1)
-            previous = pv_idx[:, :d]  # (G, l)
+            idx_d = best_idx[-d-1] # (G, n0, ..., nd-1)
+            previous = pv_idx[:, :d]  # (G, d)
             new = self._batched_index(idx_d, previous)
-            pv_idx[:, d] = new.view(g)
+            pv_idx[:, d] = new.view(self.G)
 
         exp_dim = self.exp_dim[1:]  # (D,)
         pv_idx = (pv_idx * exp_dim).sum(-1)  # (G,)
@@ -392,48 +344,36 @@ class BeamSearchState:
         # t: shape [g, n0, ..., nD]
         # idx: shape [g, D]
         g, D = idx.shape
-        batch_indices = torch.arange(g, device=idx.device)
-        return t[(batch_indices, *[idx[:, d] for d in range(D)])]
+        g_idx = torch.arange(g, device=idx.device)
+        return t[(g_idx, *[idx[:, d] for d in range(D)])]
     
-    def _extract_pv_moves(self, stack_id, pv_indices):
+    def _extract_pv_moves(self, layer, pv_indices):
         """
         Extract principal variation moves for a given stack and PV indices.
         
         Args:
-            stack_id: Stack identifier
+            layer: layer to extract moves from
             pv_indices: (G, D) principal variation indices (flat indices)
             
         Returns:
             pv_moves: (G, D) moves along the principal variation
         """
-        # Find moves for this stack
-        stack_mask = self.move_stacks == stack_id
-        if not stack_mask.any():
-            return None
+        finished_moves = self.moves[layer]  # (D, G * n0 * ... * nD-1)
+        finished_moves = finished_moves.view(self.D, self.G, -1)  # (D, G, n0 * ... * nD-1)
         
-        finished_moves = self.moves[stack_mask]  # (N_finished, D, G, n0, ..., nD-1)
-
-        # Assert exactly one stack matches (beam search invariant)
-        assert finished_moves.size(0) == 1, f"Expected exactly 1 stack match, got {finished_moves.size(0)}"
-        finished_moves = finished_moves.squeeze(0)  # (D, G, n0, ..., nD-1)
-    
-        
-        # Clean up processed moves (like in original finished_moves)
-        self.moves = self.moves[~stack_mask]
-        self.move_stacks = self.move_stacks[~stack_mask]
-        
-        finished_moves = finished_moves.flatten(start_dim=2)  # (D, G, n0 * ... * nD-1)
-        g_idx = torch.arange(self.num_games, device=pv_indices.device)  # (G,)
+        g_idx = torch.arange(self.G, device=pv_indices.device)  # (G,)
         pv_moves = finished_moves[:, g_idx, pv_indices]  # (D, G)
-        pv_moves = pv_moves.transpose(0, 1)  # Transpose to (G, D)
+
+        # Clean up processed moves
+        self.moves[layer] = self.MOVE_PAD  # Clear moves for this layer
         
-        return pv_moves
+        return pv_moves.transpose(0, 1)  # Transpose to (G, D)
     
     def get_finished_expansion(self):
         """Get mask of positions that have reached maximum depth."""
-        return self.depth >= len(self.exp_f)
+        return self.depth >= self.D # (B,)
     
-    def get_finished_stack(self, current_step):
+    def get_finished_layer(self, current_step):
         """
         Get the stack ID that should be ready for backpropagation.
         
@@ -441,9 +381,9 @@ class BeamSearchState:
             current_step: Current step/iteration number
             
         Returns:
-            stack_id: Stack ID ready for backprop, or None if not ready
+            layer: layer ID of finished at current step
         """
-        D = len(self.exp_f)
-        if current_step >= D:
-            return current_step - D
+
+        if current_step >= self.D:
+            return (current_step - self.D) % self.L
         return None

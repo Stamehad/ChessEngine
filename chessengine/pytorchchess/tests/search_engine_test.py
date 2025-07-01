@@ -18,7 +18,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cpu", choices=["cuda", "cpu", "mps"])
     args = parser.parse_args()
 
-    seed = 2
+    seed = 3
     torch.manual_seed(seed)
     GAMES = args.games
     DEVICE = args.device
@@ -66,25 +66,6 @@ if __name__ == "__main__":
     # Now just run the continuous pipeline directly
     print(f"\nRunning continuous pipeline for {STEPS} steps...")
     
-    # pv_count = 0
-    # for step in tqdm(range(STEPS), desc="Pipeline Steps", unit="step"):
-    #     # if step % 10 == 0:
-    #     #     print(f"\nStep {step}/{STEPS}")
-            
-    #     # Single pipeline step
-    #     engine.step_search()
-    #     all_positions = engine.position_queue.get_all_positions()        
-    #     terminal, result = all_positions.is_game_over(
-    #         max_plys=300,
-    #         enable_fifty_move_rule=True,
-    #         enable_insufficient_material=True,
-    #         enable_threefold_repetition=True,
-    #     )
-    #     if terminal.all():
-    #         print()
-    #         print(f"All positions game over after {step + 1} iterations")
-    #         print(f"Results: {result}")
-    #         break
 
     engine.run_full_search(STEPS)
 

@@ -115,9 +115,9 @@ class BeamSearchEngine:
             '_beam_store_early_terminated_evaluations': 'beam.store_early_term',
             '_beam_store_evaluations': 'beam.store_eval',
             '_beam_backpropagate': 'beam.backprop',
-            '_beam_add_stack': 'beam.add_stack',
+            '_beam_add_layer': 'beam.add_layer',
             '_beam_store_moves': 'beam.store_moves',
-            '_beam_get_finished_stack': 'beam.get_finished',
+            '_beam_get_finished_layer': 'beam.get_finished',
             '_beam_finished_expansion': 'beam.finished_exp',
             
             # # Coordinator methods
@@ -146,7 +146,7 @@ class BeamSearchEngine:
         # Create cycling iterator
         self.layer_cycle = self.position_queue.cycle_iterator(start_layer=0)
         
-        print(f"Initialized: {self.position_queue}")
+        #print(f"Initialized: {self.position_queue}")
         print(f"Layer stats: {self.position_queue.get_layer_stats()}")
         
         # Initialize beam search
@@ -154,44 +154,34 @@ class BeamSearchEngine:
         
     def _start_new_beam_batch(self):
         """Start beam search with current layer positions"""
-        self.beam_state = BeamSearchState.create(
+        self.beam_state = BeamSearchState.initialize(
             self.num_games, 
             self.expansion_factors, 
             device=self.device
         )
         
-        # Get current layer positions for beam search
-        current_layer = self.step % (self.L + 1)
-        self.beam_boards = self.position_queue.get_layer(current_layer, clone=True)
-        
     def step_search(self):
         """Perform one step of beam search"""
-        if self.VERBOSE:
-            print(f"\nBeam Search Step {self.step + 1}")
-            print(f"Processing layer: {self.step % (self.L + 1)}")
-            print(f"Beam positions: {self.beam_state.idx.shape[0]}")
         
-
+        print(f"\nBeam Search Step {self.step}") if self.VERBOSE else None
+        self._add_new_layer()
+        #print(self.beam_state) if self.VERBOSE else None
         self._board_get_legal_moves()
         self._terminal_check()
         
-        # if self.beam_state.idx.shape[0] == 0:
-        #     return False
-            
+
+        # MODEL INFERENCE   
         x = self._board_feature_extraction()
         evaluations = self._model_forward_pass(x)
         
+        # BACKPROPAGATE
         evaluations = self._handle_finished_expansion(evaluations)
+        self._backprop()
         
-        # Pure BeamSearchState operations
-        self._beam_handle_completed_stacks()
-        
-        # Mixed operations - separated by component
-        if self.beam_state.idx.shape[0] > 0:
+        # EXPAND
+        if len(self.beam_state) > 0:
             self._expand_positions_by_component(evaluations)
         
-        # Pure BeamSearchState + TorchBoard operations
-        self._continue_pipeline()
         self.step += 1
     
     # ============= MODEL OPERATIONS =============
@@ -210,14 +200,9 @@ class BeamSearchEngine:
     # ============= TORCHBOARD OPERATIONS =============
     def _board_get_legal_moves(self):
         """Pure TorchBoard legal move computation"""
-        self.beam_boards.get_legal_moves(get_tensor=True)
-        if self.step > 88 and self.step < 95:
-            lm = self.beam_boards.get_legal_moves(get_tensor=True)
-            print("-" * 40)
-            print(f"Step {self.step}: Legal moves tensor shape: {lm.shape}")
-            print(f"Legal moves tensor: ")
-            print(lm.encoded)
-            print("-" * 40)
+        lm = self.beam_boards.get_legal_moves(get_tensor=True)
+        print(f"Legal moves {lm.encoded.shape}") if self.VERBOSE else None
+
     def _board_feature_extraction(self):
         """Pure model feature extraction"""
         return self.beam_boards.feature_tensor().float()
@@ -255,15 +240,11 @@ class BeamSearchEngine:
         if pv_values is not None:
             moves_to_apply = pv_moves[:, :self.pv_depth]
             #print(f"Applying {moves_to_apply} PV moves to layer {target_layer}")
-            self.position_queue.apply_moves_to_layer(target_layer, moves_to_apply)
-            if self.step % (self.L + 1) == 1:
-                print(f"Applied PV moves to layer {target_layer}: {moves_to_apply}") if self.step > 80 else None
-                notation, _ = move_to_notation(moves_to_apply)
-                plys = self.position_queue.get_layer(target_layer).state.plys
-                print(f"Current plys: {plys}") if self.step > 80 else None
-                print(f"Move notation: {notation}") if self.step > 80 else None
-                print() if self.step > 80 else None
-                
+            # notation, _ = move_to_notation(moves_to_apply)
+            # plys = self.position_queue.get_layer(target_layer).state.plys
+            # print(f"Target layer: {target_layer}, current plys: {plys}")
+            # print(f"Move notation: {notation}")
+            self.position_queue.apply_moves_to_layer(target_layer, moves_to_apply)    
                 
             # terminal, result = self.position_queue[target_layer].is_game_over(
             #     max_plys=300,
@@ -279,50 +260,53 @@ class BeamSearchEngine:
 
     def _board_add_new_layer(self, next_layer):
         next_positions = self.position_queue.get_layer(next_layer, clone=True)
-        self.beam_boards = self.beam_boards.concat(next_positions)
+        if self.beam_boards is None:
+            self.beam_boards = next_positions
+        else:
+            self.beam_boards = self.beam_boards.concat(next_positions)
     
     # ============= BEAM SEARCH STATE OPERATIONS =============
     def _beam_expand_positions(self, move_data):
         """Pure BeamSearchState expansion"""
         _, _, move_indices, ks = move_data
-        return self.beam_state.expand_positions(move_indices, ks)
+        return self.beam_state.expand(move_indices, ks)
     
     def _beam_store_early_terminated_evaluations(self, dead_positions, results):
         """Pure BeamSearchState early termination evaluation storage"""
-        self.beam_state.store_early_terminated_evaluations(dead_positions, results)
+        self.beam_state.store_early_evaluations(dead_positions, results)
         if self.step > 80:
-            evals = self.beam_state.evaluations.flatten(start_dim=1)
-            eval_stack = self.beam_state.stack
+            evals = self.beam_state.evaluations
+            eval_layer = self.beam_state.layer
             print(f"Evaluations shape: {evals}")
-            print(f"Evaluation stack: {eval_stack}")
+            print(f"Evaluation stack: {eval_layer}")
     
     def _beam_store_evaluations(self, mask, evaluations):
         """Pure BeamSearchState evaluation storage"""
-        self.beam_state.store_terminal_evaluations(mask, evaluations)
+        self.beam_state.store_final_evaluations(mask, evaluations)
     
-    def _beam_backpropagate(self, finished_stack):
+    def _beam_backpropagate(self, finished_layer, side):
         """Pure BeamSearchState backpropagation"""
-        return self.beam_state.backpropagate(finished_stack) # (pv_values, pv_moves, target_layer)
+        return self.beam_state.backpropagate(finished_layer, side) # (pv_values, pv_moves, target_layer)
     
-    def _beam_add_stack(self, step):
+    def _beam_add_layer(self, layer):
         """Pure BeamSearchState stack addition"""
-        return self.beam_state.add_new_stack(step)
+        self.beam_state.add_new_layer(layer)
     
     def _beam_store_moves(self, move_data):
         new_moves, _, _, _ = move_data
-        if self.step > 80:
-            idx = self.beam_state.idx
-            game = self.beam_state.game
-            stack = self.beam_state.stack
-            print(f"Step {self.step}")
-            print(f"idx = {idx}")
-            print(f"stack = {stack}")
-            print(f"New moves: {new_moves}")
+        # if self.step > 80:
+        #     idx = self.beam_state.idx
+        #     game = self.beam_state.game
+        #     layer = self.beam_state.layer
+        #     print(f"Step {self.step}")
+        #     print(f"idx = {idx}")
+        #     print(f"layer = {layer}")
+        #     print(f"New moves: {new_moves}")
         return self.beam_state.store_moves(new_moves)
     
-    def _beam_get_finished_stack(self):
-        """Pure BeamSearchState finished stack retrieval"""
-        return self.beam_state.get_finished_stack(self.step)
+    def _beam_get_finished_layer(self):
+        """Pure BeamSearchState finished layer retrieval"""
+        return self.beam_state.get_finished_layer(self.step)
     
     def _beam_finished_expansion(self):
         """Pure BeamSearchState finished expansion check"""
@@ -333,8 +317,8 @@ class BeamSearchEngine:
         """Pure TorchBoard terminal position detection"""
         dead_positions, results = self._board_is_game_over()
 
-        print(f"Dead positions: {dead_positions}") if self.step > 80 else None
-        print(f"Results: {results}") if self.step > 80 else None
+        # print(f"Dead positions: {dead_positions}") if self.step > 80 else None
+        # print(f"Results: {results}") if self.step > 80 else None
         
         if dead_positions.any():
             self._beam_store_early_terminated_evaluations(dead_positions, results)
@@ -350,21 +334,22 @@ class BeamSearchEngine:
         self.beam_boards = self._board_push_moves(move_data)
         self._beam_store_moves(move_data)
     
-    def _beam_handle_completed_stacks(self):
+    def _backprop(self):
         """Handle PV extraction - pure beam operations"""
-        finished_stack = self._beam_get_finished_stack()
-        if finished_stack is not None:
-            print(f"Step {self.step}: Found finished stack {finished_stack}") if self.step > 80 else None
-            pv_data = self._beam_backpropagate(finished_stack)
+        finished_layer = self._beam_get_finished_layer()
+        if finished_layer is not None:
+            # print(f"Step {self.step}: Found finished layer {finished_layer}") if self.step > 80 else None
+            side = self.position_queue[finished_layer].side.clone()
+            pv_data = self._beam_backpropagate(finished_layer, side)
             self._board_apply_moves_to_roots(pv_data)
 
         else:
             print(f"Step {self.step}: No finished stack") if self.step > self.L else None
     
-    def _continue_pipeline(self):
+    def _add_new_layer(self):
         """Pipeline continuation - mixed operations"""
-        self.beam_state = self._beam_add_stack(self.step + 1)
-        next_layer = (self.step + 1) % (self.L + 1)
+        next_layer = self.step % (self.L + 1)
+        self._beam_add_layer(next_layer)
         self._board_add_new_layer(next_layer)
     
     def _handle_finished_expansion(self, evaluations):
