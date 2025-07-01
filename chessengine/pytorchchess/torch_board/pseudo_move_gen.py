@@ -246,7 +246,6 @@ class PseudoMoveGenerator:
             attack_map[b_idx[mask], sqs[mask]] = 1                      # (B, 64)
 
         return attack_map # (B, 64)
-
     
     def short_range_moves(self):
         side = self.side_to_move  # (B, 1)

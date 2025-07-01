@@ -30,6 +30,8 @@ def board_enconding(board: chess.Board, device) -> torch.Tensor:
     return plane
 
 def encode(boards: list[chess.Board], device: str = "cpu") -> torch.Tensor:
+    if isinstance(boards, list):
+        assert len(boards) > 0, "Input list of boards cannot be empty."
     if not isinstance(boards, list):
         boards = [boards]
     if not all(isinstance(b, chess.Board) for b in boards):
@@ -45,8 +47,8 @@ def get_side(boards: list[chess.Board], device) -> torch.Tensor:
     
     return side.view(-1, 1)  # (B, 1)
 
-def get_plys(boards: list[chess.Board], device) -> torch.Tensor:
-    plys = torch.tensor([b.fullmove_number - 1 for b in boards], dtype=torch.uint8, device=device)
+def get_fullmoves(boards: list[chess.Board], device) -> torch.Tensor:
+    plys = torch.tensor([b.fullmove_number - 1 for b in boards], dtype=torch.long, device=device)
     
     return plys # (B,)
 
@@ -67,6 +69,11 @@ def ep_square(boards: list[chess.Board], device) -> torch.Tensor:
     
     return ep_squares
 
+def get_fifty_move_clock(boards: list[chess.Board], device) -> torch.Tensor:
+    """Extract fifty-move clock (halfmoves since last pawn move or capture) from boards"""
+    fifty_move_clocks = torch.tensor([b.halfmove_clock for b in boards], dtype=torch.uint8, device=device)
+    return fifty_move_clocks  # (B,)
+
 def state_from_board(boards: list[chess.Board], device: str = "cpu") -> GameState:
     """
     Convert a list of chess.Board instances to a GameState object.
@@ -84,9 +91,12 @@ def state_from_board(boards: list[chess.Board], device: str = "cpu") -> GameStat
         raise TypeError("All elements in boards must be chess.Board instances.")
     
     side = get_side(boards, device=device)  # (B, 1)
-    plys = get_plys(boards, device=device)  # (B,)
+    full_moves = get_fullmoves(boards, device=device)  # (B,)
+    plys = torch.where(side.squeeze() == 1, full_moves * 2, full_moves * 2 + 1)  # (B,) - convert to plys (0 for white, 1 for black)
     castling = castling_rights(boards, device=device)  # (B, 4)
     ep = ep_square(boards, device=device)  # (B,)
+    fifty_move_clock = get_fifty_move_clock(boards, device=device)  # (B,)
+    position_history = torch.zeros((len(boards), 0), dtype=torch.long, device=device)  # (B, 0) - empty history for now
 
     previous_moves = torch.tensor([2**15]*ep.shape[0], dtype=torch.uint16, device=device)  # (B,) - no previous moves
     
@@ -96,6 +106,8 @@ def state_from_board(boards: list[chess.Board], device: str = "cpu") -> GameStat
         castling=castling,  # (B, 4)
         ep=ep,  # (B,)
         previous_moves=previous_moves,  # (B,)
+        fifty_move_clock=fifty_move_clock,  # (B,)
+        position_history=position_history  # (B, 0)
     )
 
 PIECE_SYMBOLS = {

@@ -20,6 +20,9 @@ class PreMoves:
     id: torch.Tensor         # (N_moves,) 1-12
     board: torch.Tensor      # (N_moves,)
 
+    def __len__(self):
+        return self.moves.shape[0]
+    
     def clone(self):
         return PreMoves(
             moves=self.moves.clone(),
@@ -27,6 +30,9 @@ class PreMoves:
             id=self.id.clone(),
             board=self.board.clone()
         )
+    
+    def is_empty(self):
+        return self.sq.numel() == 0
 
     def filter_by_pin(self, pin: PinData):
 

@@ -84,12 +84,15 @@ def check_moves_and_features(game, game_idx):
     all_good = True
     board = game.board()
     torch_boards = TorchBoard.from_board_list(board, device='cpu')
+    
     for move_idx, move in enumerate(game.mainline_moves()):
-
+        #print()
+        #torch_boards.render()
         #-------------------------------------------------------
         # get legal moves
         #-------------------------------------------------------
-        moves = torch_boards.get_legal_moves()
+        moves = torch_boards.get_legal_moves(get_tensor=True)
+        #print(f"moves.encoded: {moves.encoded.shape}, moves.mask: {moves.mask.shape}")
         check = compare_moves(board, moves, game_idx, move_idx)
         all_good &= check
 
@@ -101,17 +104,18 @@ def check_moves_and_features(game, game_idx):
         check = feature_tensor[0] == feature_tensor2
         
         if not check.all():
+            #torch_boards.render()
             print(f"Tensors are not equal for game {game_idx} board {move_idx}")
             for i in range(21):
                 check_i = feature_tensor[0, :, :, i] == feature_tensor2[:, :, i]
                 if not check_i.all():
                     print(f"Tensors are not equal at index {i}")
-                    print("torch board:")
-                    print(feature_tensor[0, :, :, i].flip(0))
-                    print()
-                    print("chess board:")
-                    print(feature_tensor2[:, :, i].flip(0))
-                    print()
+                    # print("torch board:")
+                    # print(feature_tensor[0, :, :, i].flip(0))
+                    # print()
+                    # print("chess board:")
+                    # print(feature_tensor2[:, :, i].flip(0))
+                    # print()
             all_good = False
         
         # if game_idx == 0 and move_idx < 5:
@@ -156,7 +160,7 @@ if __name__ == "__main__":
                 print(f"Game {game_idx} failed!")
             check &= result
 
-            if game_idx == max_games:
+            if game_idx == max_games-1:
                 print(f"Stopping after {max_games} games.")             
                 break
 

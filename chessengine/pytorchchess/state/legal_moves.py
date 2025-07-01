@@ -33,6 +33,11 @@ class LegalMoves:
     tensor: Optional[torch.Tensor] = None  # (B, 64, L_max), optional
     one_hot: Optional[torch.Tensor] = None # (B, 64, L_max, 7), optional
 
+    @property
+    def shape(self):
+        """Returns the shape of the encoded legal moves."""
+        return self.encoded.shape
+
     def select(self, idx):
         return LegalMoves(
             encoded=self.encoded[idx].clone() if torch.cuda.is_available() else self.encoded.long()[idx].clone().to(torch.uint16),
@@ -50,12 +55,24 @@ class LegalMoves:
             one_hot=self.one_hot.clone() if self.one_hot is not None else None,
         )
     
+    @classmethod
+    def empty(cls, batch_size: int = 0):
+        """Returns an empty LegalMoves object."""
+        return cls(
+            encoded=torch.zeros((batch_size, 0), dtype=torch.uint16),
+            mask=torch.zeros((batch_size, 0), dtype=torch.bool),
+            tensor=None,
+            one_hot=None
+        )
+    
     def get_terminal_boards(self):
         """Returns a mask of terminal boards (no legal moves available)."""
         return self.mask.sum(dim=-1) == 0
     
     @classmethod
     def from_premoves(cls, premoves: PreMoves, batch_size: int):
+        if premoves.is_empty():
+            return cls.empty(batch_size)
         
         move_idx, to_sq = premoves.moves.nonzero(as_tuple=True) # (N_moves,), (N_moves,)
         move_type = premoves.moves[move_idx, to_sq] # (N_moves,)
@@ -132,7 +149,6 @@ class LegalMoves:
             f, r = idx % 8, idx // 8
             return f"{file_map[f]}{rank_map[r]}"
 
-        B, L_max = from_sq.shape
         from_notation = [[idx_to_coord(idx.item()) for idx in row] for row in from_sq]
         to_notation = [[idx_to_coord(idx.item()) for idx in row] for row in to_sq]
 
@@ -169,7 +185,7 @@ class LegalMoves:
         if ep_mask.any():
             sign = torch.sign(to_sq[ep_mask] - from_sq[ep_mask]) # white/black captures = 1/-1
             captured_sq = to_sq[ep_mask] - 8 * sign
-            assert (captured_sq >= 0) & (captured_sq < 64), f"Invalid en passant square {captured_sq}"
+            assert torch.all((captured_sq >= 0) & (captured_sq < 64)), f"Invalid en passant square {captured_sq}"
             lm_tensor[ep_mask] += F.one_hot(captured_sq.long(), num_classes=64) * 7
 
         # castling
@@ -237,7 +253,6 @@ class LegalMoves:
         _, topk_indices = torch.topk(logits, ks.max(), dim=-1)  # (B, max_k)
         bs = torch.arange(topk_indices.shape[0], device=topk_indices.device).view(-1, 1)
         if self.encoded.device == torch.device('cpu'):
-
             top_lm = self.encoded.long()[bs, topk_indices]  # (B, max_k)
         else:
             top_lm = self.encoded[bs, topk_indices]  # (B, max_k)
@@ -249,6 +264,72 @@ class LegalMoves:
 
         return selected_moves, b_idx, m_idx # (N_k,), (N_k,), (N_k,)    
     
-    def rank_moves(self, move_pred, ks):
+    def sample_k(self, logits, ks, temp=1.0, generator=None):
+        """
+        Sample k moves from the logits.
+        
+        Args:
+            move_logits: (B, L_max) Tensor of move logits
+            ks: (B,) LongTensor of top-k values for each board
+        
+        Returns:
+            selected_moves: (N_k,) LongTensor of selected moves
+            b_idx:          (N_k,) LongTensor of board indices corresponding to selected moves
+            m_idx:          (N_k,) LongTensor of move indices corresponding to selected moves
+        """
+        assert logits.shape == self.mask.shape, f"Logits ({logits.shape}) and legal moves ({self.mask.shape}) must have the same shape"
+        assert ks.shape[0] == self.mask.shape[0], "ks must match the batch size of legal moves"
+        assert temp > 0, "Temperature tau must be greater than 0"
+
+        moves_per_board = self.mask.sum(dim=-1)
+        ks = ks.clamp(max=moves_per_board)
+
+        t = torch.arange(ks.max(), device=self.encoded.device)     # (max_k,)
+        t = t.expand(self.encoded.shape[0], -1)                    # (B, max_k)
+        t_mask = t < ks.unsqueeze(1)                               # (B, max_k)
+        b_idx, m_idx = t_mask.nonzero(as_tuple=True)               # (N_k,), (N_k,)
+
+        logits = logits.masked_fill(~self.mask, float('-inf'))  # Apply mask to logits
+        # Sample from the logits
+        sampled_indices = torch.multinomial(F.softmax(temp * logits, dim=-1), num_samples=ks.max(), replacement=False, generator=generator)  # (B, max_k)   
+        bs = torch.arange(sampled_indices.shape[0], device=sampled_indices.device).view(-1, 1)
+        try:
+            top_lm = self.encoded[bs, sampled_indices]  # (B, max_k)
+        except RuntimeError:
+            # If the device is CPU, we need to convert to long
+            top_lm = self.encoded.long()[bs, sampled_indices]  # (B, max_k)
+
+        #----------------------------------------
+        # Flat tensor for selected moves
+        #----------------------------------------
+        selected_moves = top_lm[b_idx, m_idx]  # (N_k,) 
+        return selected_moves, b_idx, m_idx, ks
+    
+    def rank_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
         move_logits = self.get_logits(move_pred)
-        return self.get_topk(move_logits, ks)
+        if sample:
+            return self.sample_k(move_logits, ks, temp, generator)
+        else:
+            return self.get_topk(move_logits, ks)
+        
+    def check_moves(self, moves):
+        """
+        Check if the given moves are valid legal moves or padding.
+        
+        Args:
+            moves: A tensor of shape (N,) representing the moves to check.
+        
+        Returns:
+            True if the moves are valid legal moves, False otherwise.
+        """
+        assert moves.dim() == 1, f"Moves must be a 1D tensor, got {moves.dim()}D"
+        assert moves.shape[0] == self.encoded.shape[0], f"Moves shape ({moves.shape}) must match legal moves shape ({self.encoded.shape})"
+        moves = moves.to(self.encoded.dtype)
+        
+        # Check if the moves are in the legal moves encoded tensor
+        is_valid = self.encoded.eq(moves.view(-1, 1)).any(dim=1)
+        # Check if the moves are padding (2**15)
+        is_padding = moves.eq(2**15)
+
+        all_valid = (is_valid | is_padding).all(dim=0)  # Check if all moves are valid or padding
+        return all_valid
