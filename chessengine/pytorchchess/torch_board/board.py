@@ -36,7 +36,7 @@ class BoardCache:
         return new_cache
 
 class TorchBoard(PseudoMoveGenerator, InCheck, ToChessBoard, PushMoves, FeatureTensor, StoppingCondition):
-    def __init__(self, board_tensor: torch.Tensor, state: GameState, device: str = "cuda", compute_cache: bool = True):
+    def __init__(self, board_tensor: torch.Tensor, state: GameState, device = torch.device("cuda"), compute_cache: bool = True):
         assert isinstance(board_tensor, torch.Tensor), "board_tensor must be a torch.Tensor"
         assert board_tensor.shape[-2:] == (8, 8), "boards must be shape (B, 8, 8)"
 
@@ -52,7 +52,7 @@ class TorchBoard(PseudoMoveGenerator, InCheck, ToChessBoard, PushMoves, FeatureT
             self.cache.check_info = self.compute_check_info()
 
     @classmethod
-    def from_board_list(cls, boards, device: str = "cuda"):
+    def from_board_list(cls, boards, device = torch.device("cuda")):
         board_tensor = encode(boards, device=device)  # (B, 8, 8)
         state = state_from_board(boards, device=device)
 

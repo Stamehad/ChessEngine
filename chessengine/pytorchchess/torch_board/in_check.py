@@ -91,7 +91,12 @@ class InCheck:
         #------------------------------------------------------------
         # Computing attack directions from the king's perspective!
         rays = torch.arange(8, device=board.device)[:, None, None] # (8, 1, 1)
-        ATTACK_MASK = king_mask @ c.QUEEN_MOVES.view(-1, 64) # (B, 64)
+        try:
+            ATTACK_MASK = king_mask @ c.QUEEN_MOVES.view(-1, 64) # (B, 64)
+        except:
+            # QUEEN_MOVES.shaepe = (64, 8, 8) - > (B, 64, 1) * (1, 64, 64)
+            ATTACK_MASK = king_mask.unsqueeze(-1) * c.QUEEN_MOVES.view(1, -1, 64) # (B, 64, 64)
+            ATTACK_MASK = ATTACK_MASK.sum(dim=1) # (B, 64)
         attacking_rays = ATTACK_MASK * (ATTACK_MASK % 8 == rays) # (8, B, 64)
     
         #------------------------------------------------------------

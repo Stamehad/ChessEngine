@@ -1,6 +1,7 @@
 import chess # type: ignore
 import torch
 from pytorchchess.state.game_state import GameState
+from pytorchchess.utils.utils import move_dtype
 
 def piece_to_index(piece):
     """Maps a chess.Piece to channel index (1-12), or 0 for empty"""
@@ -74,7 +75,7 @@ def get_fifty_move_clock(boards: list[chess.Board], device) -> torch.Tensor:
     fifty_move_clocks = torch.tensor([b.halfmove_clock for b in boards], dtype=torch.uint8, device=device)
     return fifty_move_clocks  # (B,)
 
-def state_from_board(boards: list[chess.Board], device: str = "cpu") -> GameState:
+def state_from_board(boards: list[chess.Board], device = torch.device("cpu")) -> GameState:
     """
     Convert a list of chess.Board instances to a GameState object.
     
@@ -97,8 +98,8 @@ def state_from_board(boards: list[chess.Board], device: str = "cpu") -> GameStat
     ep = ep_square(boards, device=device)  # (B,)
     fifty_move_clock = get_fifty_move_clock(boards, device=device)  # (B,)
     position_history = torch.zeros((len(boards), 0), dtype=torch.long, device=device)  # (B, 0) - empty history for now
-
-    previous_moves = torch.tensor([2**15]*ep.shape[0], dtype=torch.uint16, device=device)  # (B,) - no previous moves
+    
+    previous_moves = torch.tensor([2**15]*ep.shape[0], dtype=move_dtype(device), device=device)  # (B,) - no previous moves
     
     return GameState(
         side_to_move=side,  # (B, 1)

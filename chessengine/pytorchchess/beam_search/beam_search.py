@@ -37,7 +37,8 @@ class BeamSearchState:
     
     # Constants
     MOVE_PAD: int = 2**15
-    EVAL_PAD: float = 0.0
+    EVAL_PAD: float = 2.0
+    DEBUG: bool = False  # Enable debugging output
     
     @property
     def exp_dim(self):
@@ -57,7 +58,7 @@ class BeamSearchState:
         return self.idx.size(0)
     
     @classmethod
-    def initialize(cls, G, expansion_factors, device="cpu"):
+    def initialize(cls, G, expansion_factors, debug, device="cpu"):
         """Initialize a new BeamSearchState with given parameters"""
         exp_f = expansion_factors.clone().to(device=device, dtype=torch.long)
         D = len(exp_f)  
@@ -76,6 +77,8 @@ class BeamSearchState:
 
             evaluations=torch.full((L, G, *exp_f), cls.EVAL_PAD, device=device).flatten(start_dim=1),  
             moves=torch.full((L, D, G, *exp_f), cls.MOVE_PAD, device=device).flatten(start_dim=2), 
+
+            DEBUG=debug,
         )
     
     def __getitem__(self, key):
@@ -90,12 +93,13 @@ class BeamSearchState:
             D=self.D,
             L=self.L,
             evaluations=self.evaluations,  
-            moves=self.moves,              
+            moves=self.moves,    
+            DEBUG=self.DEBUG,          
         )
     
     def __repr__(self):
         """String representation of the BeamSearchState"""
-        return (f"BeamSearchState:\n"
+        return (f"BeamSearchState (B={len(self)}):\n"
                 f"  Idx:   {self.idx}\n" 
                 f"  Game:  {self.game}\n"
                 f"  Layer: {self.layer}\n" 
@@ -141,6 +145,7 @@ class BeamSearchState:
             L=self.L,
             evaluations=self.evaluations,
             moves=self.moves,
+            DEBUG=self.DEBUG,
         )
     
     #==========================================================================
@@ -225,11 +230,14 @@ class BeamSearchState:
         """Backpropagate evaluations and return principal variation with target layer"""
         # Get evaluations for this stack
         evals = self.evaluations[layer].view(self.G, *self.exp_f) # (G, n0, n1, ..., nD-1)
-        mask = evals == self.EVAL_PAD # Mask for invalid evals       
-        if mask.all():
+        mask = evals == self.EVAL_PAD # Mask for invalid evals
+        finished = (evals == 1).all() or (evals == -1).all()  # Check if all positions are terminal       
+        if mask.all() or finished:
             return None, None, None
-        
+
         pv_values, pv_indices = self._minimax_backprop(evals, mask, side)
+
+        self.eval_debug(layer, side, pv_values) # Debugging output
         
         # Get corresponding moves
         pv_moves = self._extract_pv_moves(layer, pv_indices)
@@ -290,7 +298,7 @@ class BeamSearchState:
             idx = torch.where(current_side, max_idx, min_idx)
             
             best_idx.append(idx)
-            mask = mask.all(dim=-1)
+            mask = mask.all(dim=-1) # (G, n0, ..., nD-k-2)
             
             # Flip sides and remove the last dimension for next iteration
             current_side = ~current_side.squeeze(-1)  # Remove one dimension and flip
@@ -364,6 +372,8 @@ class BeamSearchState:
         g_idx = torch.arange(self.G, device=pv_indices.device)  # (G,)
         pv_moves = finished_moves[:, g_idx, pv_indices]  # (D, G)
 
+        self.move_debug(layer, pv_moves) # Debugging output
+
         # Clean up processed moves
         self.moves[layer] = self.MOVE_PAD  # Clear moves for this layer
         
@@ -387,3 +397,27 @@ class BeamSearchState:
         if current_step >= self.D:
             return (current_step - self.D) % self.L
         return None
+    
+    def eval_debug(self, layer, side, pv_values):
+        if not self.DEBUG:
+            return
+        
+        side_str = ["w" if s else "b" for s in side.bool().tolist()]
+        print(f"Backpropagating layer {layer} ({side_str}) with evaluations:")
+        
+        evals_flat = self.evaluations[layer].view(self.G, -1)
+        for g in range(self.G):
+            print(f"  {evals_flat[g]}")
+            print(f"  PV value: {pv_values[g]:.3f}")
+        print()
+
+    def move_debug(self, layer, pv_moves):
+        if not self.DEBUG:
+            return
+        print(f"Finished moves for layer {layer}:")
+        t = self.moves[layer].view(self.D, self.G, -1)
+        t = torch.where(t != self.MOVE_PAD, t, -1)
+        for g in range(self.G):
+            print(t[:, g])
+            print(f"PV moves: {pv_moves[:, g]}")
+        print()

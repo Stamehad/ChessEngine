@@ -50,7 +50,8 @@ def squares_to_int(from_sq: torch.Tensor, to_sq: torch.Tensor, move_type: torch.
         if isinstance(move_type, torch.Tensor):
             move_type = move_type.int()
         move = from_sq.int() + to_sq.int() * 2**6 + move_type * 2**12
-        return move.to(torch.uint16)
+        
+        return move.to(move_dtype(from_sq.device))
 
 def int_to_squares(move: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Convert a 16-bit integer to from_sq, to_sq, and move_type
@@ -71,3 +72,14 @@ def to_chess_move(encoded_move: torch.Tensor) -> chess.Move:
         mapping = {1: chess.QUEEN, 2: chess.ROOK, 3: chess.BISHOP, 4: chess.KNIGHT}
         promo_piece = mapping[promo_type.item()]
     return chess.Move(from_sq, to_sq, promotion=promo_piece)
+
+def move_dtype(device=None):
+    """Get appropriate move dtype based on device capabilities"""
+    if device is None:
+        device = torch.device('cpu')
+    
+    if device.type == 'mps':
+        return torch.int32  # MPS doesn't support uint16
+    else:
+        return torch.uint16  # Optimal for CUDA/CPU
+

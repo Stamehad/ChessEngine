@@ -3,14 +3,14 @@ import torch.nn.functional as F
 from typing import NamedTuple
 from dataclasses import dataclass
 from typing import Optional
-from pytorchchess.utils.utils import get_check_blockers, squares_to_int, int_to_squares
+from pytorchchess.utils.utils import get_check_blockers, squares_to_int, int_to_squares, move_dtype
 from pytorchchess.utils.constants import PROMOTION_MASK  
 from .premoves import PreMoves
 from model.utils import masked_one_hot
 
 @dataclass
 class LegalMoves:
-    """Encodes and decodes chess moves to a 16-bit integer format.
+    """Encodes and decodes chess moves to a 16-bit u-integer format.
 
     Layout:
     bits 0-5   (6 bits): from_sq (0-63)
@@ -40,7 +40,7 @@ class LegalMoves:
 
     def select(self, idx):
         return LegalMoves(
-            encoded=self.encoded[idx].clone() if torch.cuda.is_available() else self.encoded.long()[idx].clone().to(torch.uint16),
+            encoded=self.encoded[idx].clone() if torch.cuda.is_available() else self.encoded.long()[idx].clone().to(move_dtype(self.encoded.device)),
             mask=self.mask[idx].clone(),
             tensor=self.tensor[idx].clone() if self.tensor is not None else None,
             one_hot=self.one_hot[idx].clone() if self.one_hot is not None else None,
@@ -56,11 +56,11 @@ class LegalMoves:
         )
     
     @classmethod
-    def empty(cls, batch_size: int = 0):
+    def empty(cls, device, batch_size: int = 0):
         """Returns an empty LegalMoves object."""
         return cls(
-            encoded=torch.zeros((batch_size, 0), dtype=torch.uint16),
-            mask=torch.zeros((batch_size, 0), dtype=torch.bool),
+            encoded=torch.zeros((batch_size, 0), device=device, dtype=move_dtype(device)),
+            mask=torch.zeros((batch_size, 0), device=device, dtype=torch.bool),
             tensor=None,
             one_hot=None
         )
@@ -72,7 +72,7 @@ class LegalMoves:
     @classmethod
     def from_premoves(cls, premoves: PreMoves, batch_size: int):
         if premoves.is_empty():
-            return cls.empty(batch_size)
+            return cls.empty(premoves.device, batch_size)
         
         move_idx, to_sq = premoves.moves.nonzero(as_tuple=True) # (N_moves,), (N_moves,)
         move_type = premoves.moves[move_idx, to_sq] # (N_moves,)
@@ -126,9 +126,14 @@ class LegalMoves:
         s = s.cumsum(dim=1) * s
         s = s[:, None, :] == l_idx
         
-        legal_moves = s.long() @ all_moves
+        try:
+            legal_moves = s.long() @ all_moves
+        except:
+            # s.shape = (B, L_max, N_moves), all_moves.shape = (N_moves,)
+            legal_moves = s.long() * all_moves
+            legal_moves = legal_moves.sum(dim=-1)  # (B, L_max)
         legal_moves = legal_moves.masked_fill(s.sum(dim=-1) == 0, 2**15)  # padding
-        legal_moves = legal_moves.to(torch.uint16)
+        legal_moves = legal_moves.to(move_dtype(legal_moves.device))
 
         mask = (s.sum(dim=-1) > 0)  # (B, L_max)
         

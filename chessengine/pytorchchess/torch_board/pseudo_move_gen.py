@@ -164,7 +164,11 @@ class PseudoMoveGenerator:
         attacks_by_piece, _ = self.get_short_range_geometric_moves(pieces, side, capture_only=True) # (N, 64)
 
         pieces_to_boards = torch.nn.functional.one_hot(pieces.board, num_classes=side.shape[0]) # (N, B)
-        short_range_attacks = pieces_to_boards.T @ attacks_by_piece.long() # (B, 64)
+        try:
+            short_range_attacks = pieces_to_boards.T @ attacks_by_piece.long() # (B, 64)
+        except:
+            short_range_attacks = pieces_to_boards.T.unsqueeze(-1) * attacks_by_piece.unsqueeze(0).long() # (B, N, 64)
+            short_range_attacks = short_range_attacks.sum(dim=1)
         short_range_attacks = short_range_attacks.bool() # (B, 64)
 
         # long range attacks
@@ -191,8 +195,12 @@ class PseudoMoveGenerator:
         long_range_attacks = long_range_attacks.sum(dim=0) # (N, 64)
 
         pieces_to_boards = torch.nn.functional.one_hot(pieces.board, num_classes=side.shape[0])  # (N, B)
-        long_range_attacks = pieces_to_boards.T @ long_range_attacks.long() # (B, 64)
-        long_range_attacks = long_range_attacks.bool() # (B, 64)
+        try:
+            long_range_attacks = pieces_to_boards.T @ long_range_attacks.long() # (B, 64)
+        except:
+            long_range_attacks = pieces_to_boards.T.unsqueeze(-1) * long_range_attacks.unsqueeze(0).long() # (B, N, 64)
+            long_range_attacks = long_range_attacks.sum(dim=1) # (B, 64)
+        long_range_attacks = long_range_attacks.bool()
 
         attacks = short_range_attacks | long_range_attacks # (B, 64)
 

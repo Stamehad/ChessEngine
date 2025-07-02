@@ -50,9 +50,10 @@ class BeamSearchEngine:
             self, 
             model, 
             expansion_factors, 
-            device="cpu", 
+            device=torch.device("cpu"), 
             pv_depth=3, 
             verbose=False, 
+            debug=False,
             profile=False,
             seed=None
         ):
@@ -79,6 +80,7 @@ class BeamSearchEngine:
         # Create cycling iterator for continuous pipeline
         self.layer_cycle = None
         self.VERBOSE = verbose  # Enable verbose output for debugging
+        self.DEBUG = debug  # Enable debug output for detailed tracing
         
         # Enable/disable profiling
         if profile:
@@ -157,15 +159,16 @@ class BeamSearchEngine:
         self.beam_state = BeamSearchState.initialize(
             self.num_games, 
             self.expansion_factors, 
+            self.DEBUG,
             device=self.device
         )
         
     def step_search(self):
         """Perform one step of beam search"""
-        
+        print("="*80) if self.VERBOSE else None
         print(f"\nBeam Search Step {self.step}") if self.VERBOSE else None
         self._add_new_layer()
-        #print(self.beam_state) if self.VERBOSE else None
+        print(self.beam_state) if self.VERBOSE else None
         self._board_get_legal_moves()
         self._terminal_check()
         
@@ -239,22 +242,7 @@ class BeamSearchEngine:
         pv_values, pv_moves, target_layer = pv_data
         if pv_values is not None:
             moves_to_apply = pv_moves[:, :self.pv_depth]
-            #print(f"Applying {moves_to_apply} PV moves to layer {target_layer}")
-            # notation, _ = move_to_notation(moves_to_apply)
-            # plys = self.position_queue.get_layer(target_layer).state.plys
-            # print(f"Target layer: {target_layer}, current plys: {plys}")
-            # print(f"Move notation: {notation}")
             self.position_queue.apply_moves_to_layer(target_layer, moves_to_apply)    
-                
-            # terminal, result = self.position_queue[target_layer].is_game_over(
-            #     max_plys=300,
-            #     enable_fifty_move_rule=True,
-            #     enable_insufficient_material=True,
-            #     enable_threefold_repetition=True,
-            # )
-            # if terminal.any():
-            #     print(f"Layer {target_layer} positions game over: {terminal}")
-            #     print(f"Results: {result}")
         else:
             print("No PV values to apply - skipping move application")
 
@@ -274,11 +262,6 @@ class BeamSearchEngine:
     def _beam_store_early_terminated_evaluations(self, dead_positions, results):
         """Pure BeamSearchState early termination evaluation storage"""
         self.beam_state.store_early_evaluations(dead_positions, results)
-        if self.step > 80:
-            evals = self.beam_state.evaluations
-            eval_layer = self.beam_state.layer
-            print(f"Evaluations shape: {evals}")
-            print(f"Evaluation stack: {eval_layer}")
     
     def _beam_store_evaluations(self, mask, evaluations):
         """Pure BeamSearchState evaluation storage"""
@@ -294,14 +277,6 @@ class BeamSearchEngine:
     
     def _beam_store_moves(self, move_data):
         new_moves, _, _, _ = move_data
-        # if self.step > 80:
-        #     idx = self.beam_state.idx
-        #     game = self.beam_state.game
-        #     layer = self.beam_state.layer
-        #     print(f"Step {self.step}")
-        #     print(f"idx = {idx}")
-        #     print(f"layer = {layer}")
-        #     print(f"New moves: {new_moves}")
         return self.beam_state.store_moves(new_moves)
     
     def _beam_get_finished_layer(self):
@@ -316,9 +291,6 @@ class BeamSearchEngine:
     def _terminal_check(self):
         """Pure TorchBoard terminal position detection"""
         dead_positions, results = self._board_is_game_over()
-
-        # print(f"Dead positions: {dead_positions}") if self.step > 80 else None
-        # print(f"Results: {results}") if self.step > 80 else None
         
         if dead_positions.any():
             self._beam_store_early_terminated_evaluations(dead_positions, results)
@@ -338,7 +310,6 @@ class BeamSearchEngine:
         """Handle PV extraction - pure beam operations"""
         finished_layer = self._beam_get_finished_layer()
         if finished_layer is not None:
-            # print(f"Step {self.step}: Found finished layer {finished_layer}") if self.step > 80 else None
             side = self.position_queue[finished_layer].side.clone()
             pv_data = self._beam_backpropagate(finished_layer, side)
             self._board_apply_moves_to_roots(pv_data)

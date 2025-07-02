@@ -1,5 +1,5 @@
 import torch
-from pytorchchess.utils import int_to_squares
+from pytorchchess.utils import int_to_squares, move_dtype
 from pytorchchess.state.game_state import GameState
 
 class PushMoves:
@@ -212,7 +212,7 @@ class PushMoves:
         new_state = self.state[board_idx]
         #new_state.update_previous_moves(moves)
         new_state.previous_moves.long()[board_idx] = moves.clone()  # (N, L_max)
-        new_state.previous_moves = new_state.previous_moves.to(torch.uint16)  # (N, L_max)
+        new_state.previous_moves = new_state.previous_moves.to(move_dtype(device))  # (N, L_max)
 
         N = moves.size(0)  # new batch size
         local_idx = torch.arange(N, device=device)           # 0..N-1

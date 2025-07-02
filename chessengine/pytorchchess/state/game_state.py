@@ -1,6 +1,8 @@
 import torch
 from dataclasses import dataclass, fields
 from typing import Optional
+from pytorchchess.utils.utils import move_dtype
+
 
 @dataclass
 class GameState:
@@ -15,6 +17,14 @@ class GameState:
     @property
     def side(self):
         return self.side_to_move.view(-1)  # (B,)
+    
+    @property
+    def device(self):
+        """Return the device of the tensors in this GameState"""
+        if self.side_to_move is not None:
+            return self.side_to_move.device
+        else:
+            return torch.device("cpu")
 
     def to(self, device: torch.device):
         return GameState(
@@ -69,7 +79,7 @@ class GameState:
         # self.previous_moves[mask] = moves[mask].to(torch.uint16)
         temp = self.previous_moves.to(torch.int32)
         temp[mask] = moves[mask].to(torch.int32)
-        self.previous_moves = temp.to(torch.uint16)
+        self.previous_moves = temp.to(move_dtype(self.device))
 
     def set_en_passant_squares(self, ep_boards: torch.Tensor, ep_squares: torch.Tensor):
         """Update en passant squares for specific boards"""
