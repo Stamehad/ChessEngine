@@ -381,7 +381,7 @@ class BeamSearchState:
     
     def get_finished_expansion(self):
         """Get mask of positions that have reached maximum depth."""
-        return self.depth >= self.D # (B,)
+        return (self.depth >= self.D).to(self.depth.device) # (B,)
     
     def get_finished_layer(self, current_step):
         """

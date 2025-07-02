@@ -53,7 +53,7 @@ class InCheck:
         in_check = check > 0 # (B,)
 
         if not in_check.any():
-            return in_check, CheckData.empty()
+            return in_check, CheckData.empty(in_check.device)
         
         #------------------------------------------------------------
         # Get check data - attacker and king square
@@ -155,11 +155,11 @@ class InCheck:
                 attacker_sq=attacker_sq,
                 attack_ray=ray_idx,
                 board=b_idx,
-                two_pawn_push_check=torch.zeros_like(b_idx, dtype=torch.bool)
+                two_pawn_push_check=torch.zeros_like(b_idx, device=b_idx.device, dtype=torch.bool)
             )
         
         else:
-            check_data = CheckData.empty()
+            check_data = CheckData.empty(in_check.device)
 
         #------------------------------------------------------------
         # Pinned pieces
@@ -186,7 +186,7 @@ class InCheck:
                 board=pin_b
             )
         else:
-            pin_data = PinData.empty()
+            pin_data = PinData.empty(pins.device)
         
         return in_check, check_data, pin_data # (B,), CheckData, PinData
     

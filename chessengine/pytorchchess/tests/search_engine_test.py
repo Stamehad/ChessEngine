@@ -65,9 +65,11 @@ if __name__ == "__main__":
     # Initialize engine
     engine.initialize(initial_torch_board)
     exp_dim = torch.cumprod(expansion_factors, dim=0)
-    print(f"Initialized engine with {GAMES} games, {L + 1} layers each")
-    print(f"Total positions: {GAMES * (L + 1)}")
+    print(f"Initialized engine with {L + 1} layers, {GAMES} games each")
+    print(f"Expansion factors: {expansion_factors.tolist()}")
     print(f"Expected batch size per step: ~{(exp_dim.sum().item() + 1) * GAMES}")
+
+    print(f"Devices: engine={engine.device}, model={model.device}, beam={engine.beam_state.idx.device}, queue={engine.position_queue.device}")
 
     # REMOVED: The confusing cycle loop
     # Now just run the continuous pipeline directly

@@ -149,7 +149,7 @@ class BeamSearchEngine:
         self.layer_cycle = self.position_queue.cycle_iterator(start_layer=0)
         
         #print(f"Initialized: {self.position_queue}")
-        print(f"Layer stats: {self.position_queue.get_layer_stats()}")
+        #print(f"Layer stats: {self.position_queue.get_layer_stats()}")
         
         # Initialize beam search
         self._start_new_beam_batch()
@@ -165,8 +165,8 @@ class BeamSearchEngine:
         
     def step_search(self):
         """Perform one step of beam search"""
-        print("="*80) if self.VERBOSE else None
-        print(f"\nBeam Search Step {self.step}") if self.VERBOSE else None
+        print("\n"+"="*80) if self.VERBOSE else None
+        print(f"Beam Search Step {self.step}") if self.VERBOSE else None
         self._add_new_layer()
         print(self.beam_state) if self.VERBOSE else None
         self._board_get_legal_moves()

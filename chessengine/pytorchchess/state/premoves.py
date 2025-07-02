@@ -77,12 +77,12 @@ class PreMoves:
             self.moves[ep] = 5 # (N_moves, 64)
 
     @classmethod
-    def empty(cls):
+    def empty(cls, device):
         return cls(
-            moves=torch.empty(0, 64, dtype=torch.uint8),
-            sq=torch.empty(0, dtype=torch.uint8),
-            id=torch.empty(0, dtype=torch.uint8),
-            board=torch.empty(0, dtype=torch.uint8)
+            moves=torch.empty(0, 64, dtype=torch.uint8, device=device),
+            sq=torch.empty(0, dtype=torch.uint8, device=device),
+            id=torch.empty(0, dtype=torch.uint8, device=device),
+            board=torch.empty(0, dtype=torch.uint8, device=device)
         )
     
     def filter_empty(self):

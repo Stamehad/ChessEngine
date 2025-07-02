@@ -25,12 +25,12 @@ class PinData:
         )
     
     @classmethod
-    def empty(cls):
+    def empty(cls, device):
         return cls(
-            king_sq=torch.empty(0, dtype=torch.uint8),
-            pinned_piece_sq=torch.empty(0, dtype=torch.uint8),
-            ray=torch.empty(0, dtype=torch.uint8),
-            board=torch.empty(0, dtype=torch.uint8)
+            king_sq=torch.empty(0, device=device, dtype=torch.uint8),
+            pinned_piece_sq=torch.empty(0, device=device, dtype=torch.uint8),
+            ray=torch.empty(0, device=device, dtype=torch.uint8),
+            board=torch.empty(0, device=device, dtype=torch.uint8)
         )
     
     def select(self, idx):
@@ -98,13 +98,13 @@ class CheckData:
         )
     
     @classmethod
-    def empty(cls):
+    def empty(cls, device):
         return cls(
-            king_sq=torch.empty(0, dtype=torch.uint8),
-            attacker_sq=torch.empty(0, dtype=torch.uint8),
-            attack_ray=torch.empty(0, dtype=torch.uint8),
-            board=torch.empty(0, dtype=torch.uint8),
-            two_pawn_push_check=torch.empty(0, dtype=torch.bool)
+            king_sq=torch.empty(0, dtype=torch.uint8, device=device),
+            attacker_sq=torch.empty(0, dtype=torch.uint8, device=device),
+            attack_ray=torch.empty(0, dtype=torch.uint8, device=device),
+            board=torch.empty(0, dtype=torch.uint8, device=device),
+            two_pawn_push_check=torch.empty(0, dtype=torch.bool, device=device)
         )
     
     def select(self, idx):
