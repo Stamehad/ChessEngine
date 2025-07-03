@@ -10,7 +10,7 @@ class PushMoves:
     def push(self, moves: torch.Tensor, board_idx: torch.Tensor = None):
         # Phase 1: Always expand
         expanded_board = self._expand_for_moves(moves, board_idx)
-        expanded_board._check_move_validity(moves) # Check if moves are valid
+        #expanded_board._check_move_validity(moves) # Check if moves are valid
         
         # Phase 2: Apply only valid moves
         PAD_MOVE = 2**15

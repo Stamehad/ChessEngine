@@ -259,7 +259,7 @@ class PseudoMoveGenerator:
         side = self.side_to_move  # (B, 1)
         pieces = self.get_short_range_pieces() # Pieces (N,)
         if pieces.is_empty():
-            return PreMoves.empty()
+            return PreMoves.empty(side.device)
         
         geo_moves, is_pawn = self.get_short_range_geometric_moves(pieces, side) # (N, 64)
 
@@ -326,7 +326,7 @@ class PseudoMoveGenerator:
     def long_range_moves(self):
         pieces = self.get_long_range_pieces() # Pieces (N,)
         if pieces.is_empty():
-            return PreMoves.empty()
+            return PreMoves.empty(pieces.sq.device)
         
         geo_moves = self.get_long_range_geometric_moves(pieces) # (N, 64)
         
@@ -393,7 +393,7 @@ class PseudoMoveGenerator:
         castling = torch.where(side == 1, self.state.castling[:, 0:2], self.state.castling[:, 2:4]) # (B, 2)
 
         if not castling.any():
-            return PreMoves.empty()
+            return PreMoves.empty(side.device)
         castling_zones = torch.where(side.unsqueeze(-1) == 1, c.CASTLING_ZONES[0:2], c.CASTLING_ZONES[2:4]) # (B, 2, 64)
         castling_zones = castling_zones.permute(0,2,1) # (B, 64, 2)
         castling_path = castling_zones.sum(dim=1) # (B, 2) should be 3,4

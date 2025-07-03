@@ -72,7 +72,7 @@ class LegalMoves:
     @classmethod
     def from_premoves(cls, premoves: PreMoves, batch_size: int):
         if premoves.is_empty():
-            return cls.empty(premoves.device, batch_size)
+            return cls.empty(premoves.sq.device, batch_size)
         
         move_idx, to_sq = premoves.moves.nonzero(as_tuple=True) # (N_moves,), (N_moves,)
         move_type = premoves.moves[move_idx, to_sq] # (N_moves,)

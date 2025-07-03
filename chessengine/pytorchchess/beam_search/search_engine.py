@@ -346,21 +346,22 @@ class BeamSearchEngine:
         """Run complete beam search until PV moves are found"""
         profiler.reset()
         iterator = range(max_iterations) if self.VERBOSE else tqdm(range(max_iterations), desc="Search", unit="iter")
-        for iteration in iterator:
-            self.step_search()
-            
-            # Terminal check
-            all_positions = self.position_queue.get_all_positions()
-            terminal, result = all_positions.is_game_over(
-                max_plys=300, enable_fifty_move_rule=True,
-                enable_insufficient_material=True, enable_threefold_repetition=True
-            )
-            
-            if terminal.all():
-                print(f"All positions terminal after {iteration + 1} iterations")
-                profiler.print_summary()
-                return True
+        with torch.no_grad():
+            for iteration in iterator:
+                self.step_search()
                 
+                # Terminal check
+                all_positions = self.position_queue.get_all_positions()
+                terminal, result = all_positions.is_game_over(
+                    max_plys=300, enable_fifty_move_rule=True,
+                    enable_insufficient_material=True, enable_threefold_repetition=True
+                )
+                
+                if terminal.all():
+                    print(f"All positions terminal after {iteration + 1} iterations")
+                    profiler.print_summary()
+                    return True
+                    
         profiler.print_summary()
         return False
         

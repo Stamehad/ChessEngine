@@ -17,8 +17,8 @@ if __name__ == "__main__":
     parser.add_argument("--games", type=int, default=2)
     parser.add_argument("--steps", type=int, default=100)  # CHANGED: steps instead of cycles
     parser.add_argument("--device", type=str, default="cpu", choices=["cuda", "cpu", "mps"])
-    parser.add_argument("--verbose", type=bool, default=False)
-    parser.add_argument("--debug", type=bool, default=False)
+    parser.add_argument("--verbose", action='store_true', help="Enable verbose output")
+    parser.add_argument("--debug", action='store_true', help="Enable debug output")
     args = parser.parse_args()
 
     seed = 4
@@ -45,6 +45,8 @@ if __name__ == "__main__":
     expansion_factors = torch.tensor([3, 2, 1], device=DEVICE)  # Top-k moves to select at each step
     #expansion_factors = torch.tensor([2, 2, 2], device=DEVICE)  # Top-k moves to select at each step
     L = len(expansion_factors)
+
+    print(f"VERBOSE: {VERBOSE}, DEBUG: {DEBUG}")
     
     engine = BeamSearchEngine(
         model=model,
