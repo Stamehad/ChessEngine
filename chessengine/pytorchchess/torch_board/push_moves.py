@@ -13,7 +13,7 @@ class PushMoves:
         #expanded_board._check_move_validity(moves) # Check if moves are valid
         
         # Phase 2: Apply only valid moves
-        PAD_MOVE = 2**15
+        PAD_MOVE = -1
         valid_mask = moves != PAD_MOVE
         if valid_mask.any():
             expanded_board._apply_moves_masked(moves, valid_mask)
@@ -71,7 +71,8 @@ class PushMoves:
             return  # No valid moves to apply
             
         # Extract move components
-        from_sq, to_sq, move_type = int_to_squares(moves[valid_mask]) # (B_masked,)
+        moves = moves[valid_mask]  # (B_masked,)
+        from_sq, to_sq, move_type = int_to_squares(moves) # (B_masked,)
         data = self._compute_move_context(from_sq, to_sq, move_type, valid_mask)
         
         # Apply each move type with proper masking

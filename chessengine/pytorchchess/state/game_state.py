@@ -11,7 +11,7 @@ class GameState:
     castling: torch.Tensor      # (B,4) uint8: KQkq
     ep: torch.Tensor            # (B,) uint8
     fifty_move_clock: torch.Tensor                      # (B,) uint8: number of moves since last pawn move or capture
-    previous_moves: Optional[torch.Tensor] = None       # (B,) uint16: last move 
+    previous_moves: Optional[torch.Tensor] = None       # (B,) int16: last move 
     position_history: Optional[torch.Tensor] = None     # (B, H) long Zobrist hashes of previous positions
 
     @property
@@ -76,9 +76,10 @@ class GameState:
     
     def update_previous_moves(self, moves: torch.Tensor, idx: torch.Tensor):
         """Update the previous moves for the specified boards"""
-        temp = self.previous_moves.to(torch.int32)
-        temp[idx] = moves[idx].to(torch.int32)
-        self.previous_moves = temp.to(move_dtype(self.device))
+        self.previous_moves[idx] = moves.to(move_dtype(self.device))
+        # temp = self.previous_moves.to(torch.int32)
+        # temp[idx] = moves[idx].to(torch.int32)
+        # self.previous_moves = temp.to(move_dtype(self.device))
 
     def set_en_passant_squares(self, ep_boards: torch.Tensor, ep_squares: torch.Tensor):
         """Update en passant squares for specific boards"""

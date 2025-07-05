@@ -209,14 +209,13 @@ class TorchBoard(PseudoMoveGenerator, InCheck, ToChessBoard, PushMoves, FeatureT
         This creates a view that shares memory with the original TorchBoard.
         Modifications to the returned TorchBoard will affect the original.
         """
-        previous_moves_long = self.state.previous_moves.long()
         new_state = GameState(
             side_to_move   = self.state.side_to_move[idx],  # No clone()
             plys           = self.state.plys[idx],           # No clone()
             castling       = self.state.castling[idx],       # No clone()
             ep             = self.state.ep[idx],             # No clone()
             fifty_move_clock = self.state.fifty_move_clock[idx],  # No clone()
-            previous_moves = previous_moves_long[idx].to(torch.uint16), # No clone()
+            previous_moves = self.state.previous_moves[idx], # No clone()
             position_history = self.state.position_history[idx] if self.state.position_history is not None else None  # No clone()
         )
         new_torch_board = TorchBoard(

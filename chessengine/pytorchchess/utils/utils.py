@@ -47,10 +47,13 @@ def squares_to_int(from_sq: torch.Tensor, to_sq: torch.Tensor, move_type: torch.
         # from_sq: 0-63 (6 bits)
         # to_sq: 0-63 (6 bits)
         # move_type: 0-7 (3 bits)
-        if isinstance(move_type, torch.Tensor):
-            move_type = move_type.int()
-        move = from_sq.int() + to_sq.int() * 2**6 + move_type * 2**12
+        if isinstance(from_sq, int):
+            from_sq = torch.tensor(from_sq, dtype=from_sq.dtype, device=from_sq.device)
+        # assert (from_sq >= 0).all() and (from_sq < 64).all(), "from_sq out of range"
+        # assert (to_sq >= 0).all() and (to_sq < 64).all(), "to_sq out of range"
+        # assert (move_type >= 0).all() and (move_type < 8).all(), "move_type out of range"
         
+        move = from_sq + to_sq * 2**6 + move_type * 2**12
         return move.to(move_dtype(from_sq.device))
 
 def int_to_squares(move: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -58,12 +61,11 @@ def int_to_squares(move: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torc
         # from_sq: 0-63 (6 bits)
         # to_sq: 0-63 (6 bits)
         # move_type: 0-7 (3 bits)
-        move = move.to(torch.int32)
-        move = move % 2**16
+        #move = move % 2**16
         from_sq = move % 2**6
         to_sq = (move // 2**6) % 2**6
         move_type = (move // 2**12) % 2**3
-        return from_sq, to_sq, move_type
+        return from_sq.int(), to_sq.int(), move_type.int()
 
 def to_chess_move(encoded_move: torch.Tensor) -> chess.Move:
     from_sq, to_sq, promo_type = int_to_squares(encoded_move)
@@ -81,5 +83,5 @@ def move_dtype(device=None):
     if device.type == 'mps':
         return torch.int32  # MPS doesn't support uint16
     else:
-        return torch.uint16  # Optimal for CUDA/CPU
+        return torch.int16  # Optimal for CUDA/CPU
 

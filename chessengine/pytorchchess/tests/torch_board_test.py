@@ -65,7 +65,6 @@ def compare_moves(board, moves, game_idx=None, j=None):
     # python-chess legal moves
     moves_py = {m.uci() for m in board.legal_moves}          # set of strings
 
-    # your engine’s moves (encoded uint16)
     moves_cpu = moves.encoded.int()
     moves_my_raw = moves_cpu[0][moves.mask[0]]  # 1st board, flatten
     moves_my = {to_chess_move(m, board).uci() for m in moves_my_raw}

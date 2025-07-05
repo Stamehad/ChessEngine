@@ -10,7 +10,7 @@ from model.utils import masked_one_hot
 
 @dataclass
 class LegalMoves:
-    """Encodes and decodes chess moves to a 16-bit u-integer format.
+    """Encodes and decodes chess moves to a 16-bit integer format.
 
     Layout:
     bits 0-5   (6 bits): from_sq (0-63)
@@ -39,9 +39,8 @@ class LegalMoves:
         return self.encoded.shape
 
     def select(self, idx):
-        encoded_long = self.encoded.long()
         return LegalMoves(
-            encoded=encoded_long[idx].clone().to(move_dtype(self.encoded.device)),
+            encoded=self.encoded[idx].clone(),
             mask=self.mask[idx].clone(),
             tensor=self.tensor[idx].clone() if self.tensor is not None else None,
             one_hot=self.one_hot[idx].clone() if self.one_hot is not None else None,
@@ -133,7 +132,7 @@ class LegalMoves:
             # s.shape = (B, L_max, N_moves), all_moves.shape = (N_moves,)
             legal_moves = s.long() * all_moves
             legal_moves = legal_moves.sum(dim=-1)  # (B, L_max)
-        legal_moves = legal_moves.masked_fill(s.sum(dim=-1) == 0, 2**15)  # padding
+        legal_moves = legal_moves.masked_fill(s.sum(dim=-1) == 0, -1)  # padding
         legal_moves = legal_moves.to(move_dtype(legal_moves.device))
 
         mask = (s.sum(dim=-1) > 0)  # (B, L_max)
@@ -162,7 +161,7 @@ class LegalMoves:
     
     def is_padded(self):
         # returns a mask of the padded moves (moves with bit 15 set regardless of the rest)
-        return self.encoded == 2**15
+        return self.encoded == -1
     
     def get_tensor(self, board_flat: torch.Tensor):
         """Converts the legal moves to a tensor representation.
@@ -334,8 +333,8 @@ class LegalMoves:
         
         # Check if the moves are in the legal moves encoded tensor
         is_valid = self.encoded.eq(moves.view(-1, 1)).any(dim=1)
-        # Check if the moves are padding (2**15)
-        is_padding = moves.eq(2**15)
+        # Check if the moves are padding (-1)
+        is_padding = moves.eq(-1)
 
         all_valid = (is_valid | is_padding).all(dim=0)  # Check if all moves are valid or padding
         return all_valid

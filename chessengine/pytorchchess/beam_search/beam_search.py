@@ -36,7 +36,7 @@ class BeamSearchState:
     moves: torch.Tensor       # (L, D, G * n0 * n1 * ... * nD-1) moves at each position
     
     # Constants
-    MOVE_PAD: int = 2**15
+    MOVE_PAD: int = -1
     EVAL_PAD: float = 2.0
     DEBUG: bool = False  # Enable debugging output
     

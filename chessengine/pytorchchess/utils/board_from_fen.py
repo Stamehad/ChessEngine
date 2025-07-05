@@ -99,7 +99,7 @@ def state_from_board(boards: list[chess.Board], device = torch.device("cpu")) ->
     fifty_move_clock = get_fifty_move_clock(boards, device=device)  # (B,)
     position_history = torch.zeros((len(boards), 0), dtype=torch.long, device=device)  # (B, 0) - empty history for now
     
-    previous_moves = torch.tensor([2**15]*ep.shape[0], dtype=move_dtype(device), device=device)  # (B,) - no previous moves
+    previous_moves = torch.tensor([-1]*ep.shape[0], dtype=move_dtype(device), device=device)  # (B,) - no previous moves
     
     return GameState(
         side_to_move=side,  # (B, 1)
