@@ -19,6 +19,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cpu", choices=["cuda", "cpu", "mps"])
     parser.add_argument("--verbose", action='store_true', help="Enable verbose output")
     parser.add_argument("--debug", action='store_true', help="Enable debug output")
+    parser.add_argument("--large", action='store_true', help="Choose expansion factors for larger search depth")
     args = parser.parse_args()
 
     seed = 4
@@ -28,6 +29,7 @@ if __name__ == "__main__":
     STEPS = args.steps
     VERBOSE = args.verbose
     DEBUG = args.debug
+
 
     # Load model
     load_dotenv()
@@ -41,9 +43,11 @@ if __name__ == "__main__":
     model.to(DEVICE)
 
     # Initialize beam search engine
-    expansion_factors = torch.tensor([8, 5, 3, 2, 1, 1, 1], device=DEVICE)  # L = 7 (odd depth)
-    expansion_factors = torch.tensor([3, 2, 1], device=DEVICE)  # Top-k moves to select at each step
-    #expansion_factors = torch.tensor([2, 2, 2], device=DEVICE)  # Top-k moves to select at each step
+    if args.large:
+        expansion_factors = torch.tensor([8, 5, 3, 2, 1, 1, 1], device=DEVICE)  # L = 7 (odd depth)
+    else:
+        expansion_factors = torch.tensor([3, 2, 1], device=DEVICE)  # Top-k moves to select at each step
+        #expansion_factors = torch.tensor([2, 2, 2], device=DEVICE)  # Top-k moves to select at each step
     L = len(expansion_factors)
 
     print(f"VERBOSE: {VERBOSE}, DEBUG: {DEBUG}")

@@ -116,28 +116,56 @@ class LegalMoves:
         #------------------------------------------------
         # Arrange moves by board (B, L_max) with padding
         #------------------------------------------------
-        counts = torch.bincount(all_boards) 
-        boards = torch.arange(batch_size, dtype=all_boards.dtype, device=all_boards.device)
-        L_max = counts.max()
-        l_idx = torch.arange(1, L_max+1, dtype=boards.dtype, device=boards.device)
-        l_idx = l_idx.view(1, -1, 1)
+        device  = all_moves.device
+        dtype   = move_dtype(device)
 
-        s = (all_boards.view(1, -1) == boards.view(-1, 1))
-        s = s.cumsum(dim=1) * s
-        s = s[:, None, :] == l_idx
-        
-        try:
-            legal_moves = s.long() @ all_moves
-        except:
-            # s.shape = (B, L_max, N_moves), all_moves.shape = (N_moves,)
-            legal_moves = s.long() * all_moves
-            legal_moves = legal_moves.sum(dim=-1)  # (B, L_max)
-        legal_moves = legal_moves.masked_fill(s.sum(dim=-1) == 0, -1)  # padding
-        legal_moves = legal_moves.to(move_dtype(legal_moves.device))
+        # 1. sort by board ----------------------------------------------------------
+        order        = all_boards.argsort(stable=True)
+        all_moves    = all_moves[order]
+        all_boards   = all_boards[order]
 
-        mask = (s.sum(dim=-1) > 0)  # (B, L_max)
-        
+        # 2. counts and maximum length ---------------------------------------------
+        counts       = torch.bincount(all_boards, minlength=batch_size)        # (B,)
+        L_max        = counts.max().item()
+
+        # 3. prefix-sum gives start-offset of each board’s block -------------------
+        starts       = torch.cat([torch.zeros(1, device=device, dtype=torch.long),
+                                counts.cumsum(0)[:-1]])                       # (B,)
+
+        # 4. col = global_pos – starts[board_id] -----------------------------------
+        global_pos   = torch.arange(all_moves.size(0), device=device)
+        cols         = global_pos - starts[all_boards]                          # (N_moves,)
+
+        # 5. scatter into a padded (B, L_max) tensor -------------------------------
+        legal_moves  = torch.full((batch_size, L_max), -1,
+                                dtype=dtype, device=device)
+        legal_moves[all_boards, cols] = all_moves.to(dtype)
+
+        mask         = legal_moves != -1
         return cls(encoded=legal_moves, mask=mask)
+
+        # counts = torch.bincount(all_boards) 
+        # boards = torch.arange(batch_size, dtype=all_boards.dtype, device=all_boards.device)
+        # L_max = counts.max()
+        # l_idx = torch.arange(1, L_max+1, dtype=boards.dtype, device=boards.device)
+        # l_idx = l_idx.view(1, -1, 1)
+
+        # s = (all_boards.view(1, -1) == boards.view(-1, 1))
+        # s = s.cumsum(dim=1) * s
+        # s = s[:, None, :] == l_idx
+        
+        # try:
+        #     legal_moves = s.long() @ all_moves
+        # except:
+        #     # s.shape = (B, L_max, N_moves), all_moves.shape = (N_moves,)
+        #     legal_moves = s.long() * all_moves
+        #     legal_moves = legal_moves.sum(dim=-1)  # (B, L_max)
+        # legal_moves = legal_moves.masked_fill(s.sum(dim=-1) == 0, -1)  # padding
+        # legal_moves = legal_moves.to(move_dtype(legal_moves.device))
+
+        # mask = (s.sum(dim=-1) > 0)  # (B, L_max)
+        
+        # return cls(encoded=legal_moves, mask=mask)
     
     def moves_to_standard_format(self):
         # Convert the encoded moves to standard format
