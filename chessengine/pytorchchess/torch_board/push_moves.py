@@ -15,7 +15,8 @@ class PushMoves:
         # Phase 2: Apply only valid moves
         PAD_MOVE = 2**15
         valid_mask = moves != PAD_MOVE
-        expanded_board._apply_moves_masked(moves, valid_mask)
+        if valid_mask.any():
+            expanded_board._apply_moves_masked(moves, valid_mask)
         expanded_board.invalidate_cache()  # Invalidate cache after applying moves
     
         return expanded_board
@@ -34,7 +35,7 @@ class PushMoves:
         if board_idx is None:
             board_idx = torch.arange(moves.size(0), device=device)
         
-        board_flat = self.board_flat[board_idx].clone()
+        board_flat = self.board_flat[board_idx].clone() # (B_new,)
         new_state = self.state[board_idx].clone()  # Ensure proper cloning
         
         return self.__class__(
@@ -48,22 +49,20 @@ class PushMoves:
                               move_type: torch.Tensor, mask: torch.Tensor):
         """Get pieces involved in the moves"""
         idx = torch.where(mask)[0]
-        piece_moved = self.board_flat[idx, from_sq[idx]]
-        captured_piece = self.board_flat[idx, to_sq[idx]]
+        piece_moved = self.board_flat[idx, from_sq]
+        captured_piece = self.board_flat[idx, to_sq]
 
         is_capture = (captured_piece != 0)
         is_pawn_move = (piece_moved % 6 == 1)
         resets_fifty_move = is_capture | is_pawn_move  # Reset fifty-move clock if capture or pawn move
         
         return {
-            'from': from_sq,                        # (B_new,)
-            'to': to_sq,                            # (B_new,)
-            'type': move_type,                      # (B_new,) 
-            'piece': piece_moved,                   # (B_new,)
-            'captured': captured_piece,             # (B_new,)
-            'idx': idx,                             # (B_new,)
-            'mask': mask,                           # (B_new,)
-            'resets_fifty_move': resets_fifty_move, # (B_new,)
+            'from': from_sq,                        # (B_masked,)
+            'to': to_sq,                            # (B_masked,)
+            'type': move_type,                      # (B_masked,) 
+            'piece': piece_moved,                   # (B_masked,)
+            'idx': idx,                             # (B_maksed,)
+            'resets_fifty_move': resets_fifty_move, # (B_masked,)
         }
     
     def _apply_moves_masked(self, moves: torch.Tensor, valid_mask: torch.Tensor):
@@ -72,7 +71,7 @@ class PushMoves:
             return  # No valid moves to apply
             
         # Extract move components
-        from_sq, to_sq, move_type = int_to_squares(moves) # (B_new,)
+        from_sq, to_sq, move_type = int_to_squares(moves[valid_mask]) # (B_masked,)
         data = self._compute_move_context(from_sq, to_sq, move_type, valid_mask)
         
         # Apply each move type with proper masking
@@ -81,14 +80,10 @@ class PushMoves:
         self._update_game_state(data, moves)
     
     def _apply_basic_moves(self, data):
-        """Apply basic piece movement (from->to) with masking"""
-        idx, mask = data['idx'], data['mask']
-        if not mask.any():
-            return
-        
-        from_sq, to_sq, piece_moved = data['from'], data['to'], data['piece']
-        self.board_flat[idx, from_sq[idx]] = 0
-        self.board_flat[idx, to_sq[idx]] = piece_moved
+        """Apply basic piece movement (from->to) with masking"""  
+        idx, from_sq, to_sq, piece_moved = data['idx'], data['from'], data['to'], data['piece']
+        self.board_flat[idx, from_sq] = 0
+        self.board_flat[idx, to_sq] = piece_moved
     
     def _apply_special_moves(self, data):
         """Apply special moves (en passant, castling, promotion) with masking"""
@@ -99,55 +94,55 @@ class PushMoves:
     def _apply_en_passant(self, data):
         """Handle en passant moves and double pawn pushes"""
         # Reset en passant for all valid moves (not just type 5)
-        mask, from_sq, to_sq, move_type = data['mask'], data['from'], data['to'], data['type']
+        idx, from_sq, to_sq, move_type = data['idx'], data['from'], data['to'], data['type']
         
-        self.state.reset_en_passant(mask)
-        type5_mask = mask & (move_type == 5)
+        self.state.reset_en_passant(idx)
+        type5_mask = (move_type == 5) # (B_masked,)
         if not type5_mask.any():
             return
         
         # Handle double pawn pushes
         pawn_push_mask = type5_mask & (torch.abs(from_sq - to_sq) == 16)
         if pawn_push_mask.any():
-            valid_boards = torch.where(pawn_push_mask)[0]
+            ep_boards = idx[pawn_push_mask]
             ep_squares = (from_sq[pawn_push_mask] + to_sq[pawn_push_mask]) // 2
-            self.state.set_en_passant_squares(valid_boards, ep_squares)
+            self.state.set_en_passant_squares(ep_boards, ep_squares)
         
         # Handle en passant captures
         ep_capture_mask = type5_mask & ~pawn_push_mask
         if ep_capture_mask.any():
-            valid_boards = torch.where(ep_capture_mask)[0]
+            ep_boards = idx[ep_capture_mask]
             ep_tos = to_sq[ep_capture_mask]
-            ep_dirs = torch.where(self.side[valid_boards] == 1, -8, 8)
+            ep_dirs = torch.where(self.side[ep_boards] == 1, -8, 8)
             ep_caps = ep_tos + ep_dirs
-            self.board_flat[valid_boards, ep_caps] = 0
+            self.board_flat[ep_boards, ep_caps] = 0
     
     def _apply_promotions(self, data):
         """Handle pawn promotions"""
-        mask, to_sq, move_type = data['mask'], data['to'], data['type']
+        idx, to_sq, move_type = data['idx'], data['to'], data['type']
         
-        promotion_mask = mask & (move_type >= 1) & (move_type <= 4) # (B_new,)
+        promotion_mask = (move_type >= 1) & (move_type <= 4) # (B_masked,)
         if not promotion_mask.any():
             return
             
-        valid_boards = torch.where(promotion_mask)[0] # (VB,)
+        promo_boards = idx[promotion_mask]
         promotion_pieces = torch.where(
-            self.side[valid_boards] == 1,
+            self.side[promo_boards] == 1,
             6 - move_type[promotion_mask],   # White pieces
             12 - move_type[promotion_mask]   # Black pieces
-        ) # (VB,)
-        self.board_flat[valid_boards, to_sq[promotion_mask]] = promotion_pieces.to(torch.uint8)
+        )
+        self.board_flat[promo_boards, to_sq[promotion_mask]] = promotion_pieces.to(torch.uint8)
     
     def _apply_castling(self, data):
         """Handle castling moves"""
-        mask, from_sq, to_sq, move_type = data['mask'], data['from'], data['to'], data['type']
+        idx, from_sq, to_sq, move_type = data['idx'], data['from'], data['to'], data['type']
         
-        castling_mask = mask & ((move_type == 6) | (move_type == 7))
+        castling_mask = ((move_type == 6) | (move_type == 7)) # (B_masked,)
         if not castling_mask.any():
             return
             
-        valid_boards = torch.where(castling_mask)[0]
-        side = self.side[valid_boards]
+        castling_boards = idx[castling_mask]
+        side = self.side[castling_boards]
         sign = torch.sign(to_sq[castling_mask] - from_sq[castling_mask])
         shift = torch.where(sign == 1, 3, 4).to(torch.uint8)
         rook = torch.where(side == 1, 4, 10).to(torch.uint8)
@@ -155,28 +150,25 @@ class PushMoves:
         rook_from = from_sq[castling_mask] + sign * shift
         rook_to = to_sq[castling_mask] - sign
         
-        self.board_flat[valid_boards, rook_from] = 0
-        self.board_flat[valid_boards, rook_to] = rook
+        self.board_flat[castling_boards, rook_from] = 0
+        self.board_flat[castling_boards, rook_to] = rook
     
     def _update_game_state(self, data, moves):
         """Update game state (castling rights, fifty-move rule, etc.)"""
-        mask, piece_moved, from_sq, to_sq, resets_fifty_move = (
-            data['mask'], data['piece'], data['from'], data['to'], data['resets_fifty_move']
+        idx, piece_moved, from_sq, to_sq, resets_fifty_move = (
+            data['idx'], data['piece'], data['from'], data['to'], data['resets_fifty_move']
         )
-        
-        if not mask.any():
-            return
             
-        self.state.update_previous_moves(moves, mask)
-        self._update_castling_rights(piece_moved, from_sq, to_sq, mask)
-        self.state.update_after_move(resets_fifty_move, mask)
+        self.state.update_previous_moves(moves, idx)
+        self._update_castling_rights(piece_moved, from_sq, to_sq, idx)
+        self.state.update_after_move(resets_fifty_move, idx)
 
     def _update_castling_rights(self, piece_moved: torch.Tensor, 
-                               from_sq: torch.Tensor, to_sq: torch.Tensor, mask: torch.Tensor):
+                               from_sq: torch.Tensor, to_sq: torch.Tensor, idx: torch.Tensor):
         """Update castling rights based on moves"""
-        if not mask.any(): # or not self.state.castling.any():
+        if not self.state.castling.any():
             return
-        
+        #print(f"piece_moved.shape = {piece_moved.shape}, from_sq.shape = {from_sq.shape}, to_sq.shape = {to_sq.shape}, mask.shape = {mask.shape}")
         # Determine which pieces moved
         white_king_move = (piece_moved == 6)
         black_king_move = (piece_moved == 12)
@@ -194,10 +186,10 @@ class PushMoves:
         # print(f"self.state.castling = {self.state.castling}, castling_update = {castling_update}")
         #self.state.update_castling_rights(castling_update, mask)
         # print(f"Updated castling rights: {self.state.castling}")
-        self.state.castling[mask, 0] &= ~ks_white[mask]
-        self.state.castling[mask, 1] &= ~qs_white[mask] 
-        self.state.castling[mask, 2] &= ~ks_black[mask]
-        self.state.castling[mask, 3] &= ~qs_black[mask]
+        self.state.castling[idx, 0] &= ~ks_white
+        self.state.castling[idx, 1] &= ~qs_white
+        self.state.castling[idx, 2] &= ~ks_black
+        self.state.castling[idx, 3] &= ~qs_black
 
     def push2(self, moves: torch.Tensor, board_idx: torch.Tensor = None): # -> "TorchBoard":
         device = self.device

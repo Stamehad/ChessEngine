@@ -37,9 +37,9 @@ def get_check_blockers(sq: torch.Tensor, n: torch.Tensor, sq2=None, two_pawn_pus
         # find the en passant square
         white = sq > sq2 # (N,) if the attacked square is above the attaker the pawn must be white
         white = white[two_pawn_push_check] # (N_tpp,)
-        ep_sq = torch.where(white, sq2 - 8, sq2 + 8) # (N_tpp,)
+        ep_sq = sq2[two_pawn_push_check] + torch.where(white, -8, 8) # (N_tpp,)
         
-        mask[two_pawn_push_check, ep_sq] = 6 # (N, 64) special value for en passant square
+        mask[two_pawn_push_check, ep_sq] = 8 # (N_tpp, 64) special value for en passant square
     return mask 
 
 def squares_to_int(from_sq: torch.Tensor, to_sq: torch.Tensor, move_type: torch.Tensor) -> torch.Tensor:

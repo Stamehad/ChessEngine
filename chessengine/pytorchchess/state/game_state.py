@@ -74,20 +74,19 @@ class GameState:
                 out[name] = t
         return GameState(**out)
     
-    def update_previous_moves(self, moves: torch.Tensor, mask: torch.Tensor):
+    def update_previous_moves(self, moves: torch.Tensor, idx: torch.Tensor):
         """Update the previous moves for the specified boards"""
-        # self.previous_moves[mask] = moves[mask].to(torch.uint16)
         temp = self.previous_moves.to(torch.int32)
-        temp[mask] = moves[mask].to(torch.int32)
+        temp[idx] = moves[idx].to(torch.int32)
         self.previous_moves = temp.to(move_dtype(self.device))
 
     def set_en_passant_squares(self, ep_boards: torch.Tensor, ep_squares: torch.Tensor):
         """Update en passant squares for specific boards"""
         self.ep[ep_boards] = ep_squares.to(torch.uint8)
     
-    def reset_en_passant(self, mask: torch.Tensor):
+    def reset_en_passant(self, idx: torch.Tensor):
         """Reset all en passant squares to invalid (64)"""
-        self.ep[mask] = 64
+        self.ep[idx] = 64
     
     def update_castling_rights(self, castling_update: torch.Tensor, mask: torch.Tensor):
         # ks_white: torch.Tensor, qs_white: torch.Tensor, 
@@ -95,19 +94,18 @@ class GameState:
         """Update castling rights based on move masks"""
         self.castling[mask] &= ~castling_update
 
-    def update_after_move(self, resets_fifty_move: torch.Tensor, mask: torch.Tensor):
+    def update_after_move(self, resets_fifty_move: torch.Tensor, idx: torch.Tensor):
         """
         Update the game state after a move.
         This includes clearing position history for irreversible moves.
         """
         # Switch side to move
-        self.side_to_move[mask] = 1 - self.side_to_move[mask]
-        self.plys[mask] += 1
+        self.side_to_move[idx] = 1 - self.side_to_move[idx]
+        self.plys[idx] += 1
         
         # Reset fifty-move clock for captures and pawn moves
-        valid_indices = torch.where(mask)[0]
-        reset_boards = valid_indices[resets_fifty_move]
-        non_reset_boards = valid_indices[~resets_fifty_move]
+        reset_boards = idx[resets_fifty_move]
+        non_reset_boards = idx[~resets_fifty_move]
 
         self.fifty_move_clock[reset_boards] = 0
         self.fifty_move_clock[non_reset_boards] += 1

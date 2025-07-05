@@ -83,7 +83,7 @@ def compare_moves(board, moves, game_idx=None, j=None):
 def check_moves_and_features(game, game_idx):
     all_good = True
     board = game.board()
-    torch_boards = TorchBoard.from_board_list(board, device='cpu')
+    torch_boards = TorchBoard.from_board_list(board, device=torch.device('cpu'))
     
     for move_idx, move in enumerate(game.mainline_moves()):
         #print()
@@ -152,6 +152,9 @@ if __name__ == "__main__":
             obj = json.loads(line)
             pgn = obj["pgn"]
 
+            # if game_idx < 570 or game_idx > 600:
+            #     continue
+            # print(f"Processing game {game_idx}...")
             game = chess.pgn.read_game(io.StringIO(pgn))
             
             #print(f"Checking game {game_idx}")

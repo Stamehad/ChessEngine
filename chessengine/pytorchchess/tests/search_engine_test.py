@@ -41,7 +41,7 @@ if __name__ == "__main__":
     model.to(DEVICE)
 
     # Initialize beam search engine
-    expansion_factors = [8, 5, 3, 2, 1, 1, 1]  # L = 7 (odd depth)
+    expansion_factors = torch.tensor([8, 5, 3, 2, 1, 1, 1], device=DEVICE)  # L = 7 (odd depth)
     expansion_factors = torch.tensor([3, 2, 1], device=DEVICE)  # Top-k moves to select at each step
     #expansion_factors = torch.tensor([2, 2, 2], device=DEVICE)  # Top-k moves to select at each step
     L = len(expansion_factors)

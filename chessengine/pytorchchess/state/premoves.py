@@ -15,6 +15,16 @@ class Pieces:
 
 @dataclass
 class PreMoves:
+    """
+    PreMoves special values:
+    0: no move
+    1: normal move
+    5: en passant capture or double pawn push
+    6: king side castling
+    7: queen side castling
+    8: spurious move (e.g. used for double-pawn-push check mask)
+    10: promotion 
+    """
     moves: torch.Tensor      # (N_moves, 64)
     sq: torch.Tensor         # (N_moves,)
     id: torch.Tensor         # (N_moves,) 1-12
@@ -68,12 +78,12 @@ class PreMoves:
         self.moves[move_idx[~is_king]] *= masks[check_idx[~is_king]]     
 
         if check.two_pawn_push_check.any():
-            # en passant -> 5, double pawn push -> 6
-            # 30 (5*6) -> hit, 6 (1*6) -> spurious move 
-            spurious = self.moves == 6 
+            # en passant -> 5, double pawn push check (masks) -> 8
+            # 40 (5*8) -> hit, 8 (1*8) -> spurious move 
+            spurious = self.moves == 8 
             self.moves[spurious] = 0 # (N_moves, 64)
 
-            ep = self.moves == 30 # (N_moves, 64)
+            ep = self.moves == 40 # (N_moves, 64)
             self.moves[ep] = 5 # (N_moves, 64)
 
     @classmethod

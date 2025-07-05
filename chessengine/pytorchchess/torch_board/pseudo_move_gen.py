@@ -163,12 +163,12 @@ class PseudoMoveGenerator:
         pieces = self.get_short_range_pieces(enemy=enemy) # Pieces (N,)        
         attacks_by_piece, _ = self.get_short_range_geometric_moves(pieces, side, capture_only=True) # (N, 64)
 
-        pieces_to_boards = torch.nn.functional.one_hot(pieces.board, num_classes=side.shape[0]) # (N, B)
-        try:
-            short_range_attacks = pieces_to_boards.T @ attacks_by_piece.long() # (B, 64)
-        except:
-            short_range_attacks = pieces_to_boards.T.unsqueeze(-1) * attacks_by_piece.unsqueeze(0).long() # (B, N, 64)
-            short_range_attacks = short_range_attacks.sum(dim=1)
+        short_range_attacks = torch.zeros(side.shape[0], 64, device=attacks_by_piece.device, dtype=attacks_by_piece.dtype) # (B, 64)
+        short_range_attacks.scatter_add_(0, pieces.board[:, None].expand(-1, 64), attacks_by_piece)
+    
+        # pieces_to_boards = torch.nn.functional.one_hot(pieces.board, num_classes=side.shape[0]) # (N, B)
+        # short_range_attacks = pieces_to_boards.T @ attacks_by_piece.long() # (B, 64)
+        
         short_range_attacks = short_range_attacks.bool() # (B, 64)
 
         # long range attacks
@@ -191,15 +191,15 @@ class PseudoMoveGenerator:
 
         # Nearest blocker value along this ray (per board)
         nearest_blocker = ray_blockers.min(dim=-1, keepdim=True)[0] # (8, N, 1)
-        long_range_attacks = (ray_moves <= nearest_blocker) & (ray_moves != 0) # (8, N, 64)
-        long_range_attacks = long_range_attacks.sum(dim=0) # (N, 64)
+        attacks_by_piece = (ray_moves <= nearest_blocker) & (ray_moves != 0) # (8, N, 64)
+        attacks_by_piece = attacks_by_piece.sum(dim=0) # (N, 64)
 
-        pieces_to_boards = torch.nn.functional.one_hot(pieces.board, num_classes=side.shape[0])  # (N, B)
-        try:
-            long_range_attacks = pieces_to_boards.T @ long_range_attacks.long() # (B, 64)
-        except:
-            long_range_attacks = pieces_to_boards.T.unsqueeze(-1) * long_range_attacks.unsqueeze(0).long() # (B, N, 64)
-            long_range_attacks = long_range_attacks.sum(dim=1) # (B, 64)
+        long_range_attacks = torch.zeros(side.shape[0], 64, device=side.device, dtype=attacks_by_piece.dtype) # (B, 64)
+        long_range_attacks.scatter_add_(0, pieces.board[:, None].expand(-1, 64), attacks_by_piece) # (B, 64)
+        
+        # pieces_to_boards = torch.nn.functional.one_hot(pieces.board, num_classes=side.shape[0])  # (N, B)
+        # long_range_attacks = pieces_to_boards.T @ long_range_attacks.long() # (B, 64)
+        
         long_range_attacks = long_range_attacks.bool()
 
         attacks = short_range_attacks | long_range_attacks # (B, 64)
@@ -389,9 +389,9 @@ class PseudoMoveGenerator:
 
     def check_castling(self) -> PreMoves:
         side = self.side_to_move # (B, 1)
-
+        
         castling = torch.where(side == 1, self.state.castling[:, 0:2], self.state.castling[:, 2:4]) # (B, 2)
-
+        
         if not castling.any():
             return PreMoves.empty(side.device)
         castling_zones = torch.where(side.unsqueeze(-1) == 1, c.CASTLING_ZONES[0:2], c.CASTLING_ZONES[2:4]) # (B, 2, 64)
@@ -433,8 +433,11 @@ class PseudoMoveGenerator:
             queenside_to = torch.where(side == 1, QUEEN_SIDE_TO[0], QUEEN_SIDE_TO[1])
 
             # Collect valid castling moves
-            ks_idx = torch.nonzero(kingside).squeeze(-1) 
-            qs_idx = torch.nonzero(queenside).squeeze(-1)
+            # ks_idx = torch.nonzero(kingside).squeeze(-1) 
+            # qs_idx = torch.nonzero(queenside).squeeze(-1)
+            
+            ks_idx = torch.nonzero(kingside, as_tuple=True)[0]
+            qs_idx = torch.nonzero(queenside, as_tuple=True)[0]
 
             ks_moves = torch.zeros((len(ks_idx), 64), dtype=torch.long, device=self.device)
             qs_moves = torch.zeros((len(qs_idx), 64), dtype=torch.long, device=self.device)

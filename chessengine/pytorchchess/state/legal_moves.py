@@ -39,8 +39,9 @@ class LegalMoves:
         return self.encoded.shape
 
     def select(self, idx):
+        encoded_long = self.encoded.long()
         return LegalMoves(
-            encoded=self.encoded[idx].clone() if torch.cuda.is_available() else self.encoded.long()[idx].clone().to(move_dtype(self.encoded.device)),
+            encoded=encoded_long[idx].clone().to(move_dtype(self.encoded.device)),
             mask=self.mask[idx].clone(),
             tensor=self.tensor[idx].clone() if self.tensor is not None else None,
             one_hot=self.one_hot[idx].clone() if self.one_hot is not None else None,
