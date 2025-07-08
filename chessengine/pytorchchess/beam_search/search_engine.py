@@ -98,40 +98,47 @@ class BeamSearchEngine:
     
     def _setup_profiling(self):
         """Centralized profiling setup - all timing config in one place"""
+
+        from pytorchchess import TorchBoard
+        from .beam_search import BeamSearchState
+
+        # Profile all TorchBoard methods for total time
+        auto_profile_class(TorchBoard, {
+            method: "step.torch_board"
+            for method in dir(TorchBoard)
+            if callable(getattr(TorchBoard, method)) and not method.startswith("_")
+        })
+
+        # Profile specific TorchBoard methods individually
+        torch_board_methods = [
+            "get_legal_moves",
+            #"short_range_moves",
+            #"long_range_moves",
+            #"attack_map",
+            "feature_tensor",
+            "push",
+            "select",
+            "concat",
+            "get_topk_legal_moves",
+            "is_game_over",
+        ]
+        auto_profile_class(TorchBoard, {
+            method: f"TorchBoard.{method}"
+            for method in torch_board_methods
+            if hasattr(TorchBoard, method)
+        })
+
+        # Profile BeamSearchState methods for total time
+        auto_profile_class(BeamSearchState, {
+            method: "step.beam_state"
+            for method in dir(BeamSearchState)
+            if callable(getattr(BeamSearchState, method)) and not method.startswith("_")
+        })
+
+        # Profile model.forward as step.model
         profile_config = {
-            # Model operations
-            '_model_forward_pass': 'model.forward',
-            
-            # TorchBoard operations  
-            '_board_get_legal_moves': 'board.legal_moves',
-            '_board_feature_extraction': 'board.features',
-            '_board_is_game_over': 'board.game_over',
-            '_board_push_moves': 'board.push_moves',
-            '_board_select_positions': 'board.selection',
-            '_board_get_topk': 'board.get_topk',
-            '_board_apply_moves_to_roots': 'board.apply_moves',   
-            '_board_add_new_layer': 'board.add_layer',            
-            
-            # BeamSearchState operations
-            '_beam_expand_positions': 'beam.expansion',
-            '_beam_store_early_terminated_evaluations': 'beam.store_early_term',
-            '_beam_store_evaluations': 'beam.store_eval',
-            '_beam_backpropagate': 'beam.backprop',
-            '_beam_add_layer': 'beam.add_layer',
-            '_beam_store_moves': 'beam.store_moves',
-            '_beam_get_finished_layer': 'beam.get_finished',
-            '_beam_finished_expansion': 'beam.finished_exp',
-            
-            # # Coordinator methods
-            # '_terminal_check': 'coord.terminal',
-            # '_expand_positions_by_component': 'coord.expansion',
-            # '_beam_handle_completed_stacks': 'coord.completed_stacks',
-            # '_continue_pipeline': 'coord.pipeline',
-            
-            # # High-level coordination
-            # 'step_search': 'engine.step',
+            '_model_forward_pass': 'step.model',
         }
-        
         auto_profile_class(self.__class__, profile_config)
     
     def initialize(self, initial_boards):
@@ -169,12 +176,13 @@ class BeamSearchEngine:
         print(f"Beam Search Step {self.step}") if self.VERBOSE else None
         self._add_new_layer()
         print(self.beam_state) if self.VERBOSE else None
-        self._board_get_legal_moves()
-        self._terminal_check()
-        
+
+        with profiler.time_block("TorchBoard"):
+            self._board_get_legal_moves()
+            self._terminal_check()
+            x = self._board_feature_extraction()
 
         # MODEL INFERENCE   
-        x = self._board_feature_extraction()
         evaluations = self._model_forward_pass(x)
         
         # BACKPROPAGATE
@@ -183,7 +191,8 @@ class BeamSearchEngine:
         
         # EXPAND
         if len(self.beam_state) > 0:
-            self._expand_positions_by_component(evaluations)
+            with profiler.time_block("TorchBoard"):
+                self._expand_positions_by_component(evaluations)
         
         self.step += 1
     
@@ -345,23 +354,25 @@ class BeamSearchEngine:
     def run_full_search(self, max_iterations=50):
         """Run complete beam search until PV moves are found"""
         profiler.reset()
-        iterator = range(max_iterations) if self.VERBOSE else tqdm(range(max_iterations), desc="Search", unit="iter")
-        with torch.no_grad():
-            for iteration in iterator:
-                self.step_search()
-                
-                # Terminal check
-                all_positions = self.position_queue.get_all_positions()
-                terminal, result = all_positions.is_game_over(
-                    max_plys=300, enable_fifty_move_rule=True,
-                    enable_insufficient_material=True, enable_threefold_repetition=True
-                )
-                
-                if terminal.all():
-                    print(f"All positions terminal after {iteration + 1} iterations")
-                    profiler.print_summary()
-                    return True
+        with profiler.time_block("total"):
+            iterator = range(max_iterations) if self.VERBOSE else tqdm(range(max_iterations), desc="Search", unit="iter")
+            with torch.no_grad():
+                for iteration in iterator:
+                    with profiler.time_block("step"):
+                        self.step_search()
                     
+                    # Terminal check
+                    all_positions = self.position_queue.get_all_positions()
+                    terminal, result = all_positions.is_game_over(
+                        max_plys=300, enable_fifty_move_rule=True,
+                        enable_insufficient_material=True, enable_threefold_repetition=True
+                    )
+                    
+                    if terminal.all():
+                        print(f"All positions terminal after {iteration + 1} iterations")
+                        profiler.print_summary()
+                        return True
+                        
         profiler.print_summary()
         return False
         
@@ -372,4 +383,3 @@ class BeamSearchEngine:
     def get_all_positions(self):
         """Get all positions in the queue"""
         return self.position_queue.get_all_positions()
-

@@ -2,138 +2,129 @@ import time
 import functools
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 import threading
 
-class HierarchicalProfiler:
-    """Clean hierarchical profiler that avoids double-counting"""
-    
+class SimpleProfiler:
+    """Simple profiler that aggregates timings flatly and prints hierarchically"""
+
     def __init__(self, enabled=False):
         self.enabled = enabled
-        self.reset()
+        self.component_stats = defaultdict(lambda: {'total_time': 0, 'call_count': 0})
         self._local = threading.local()
-    
+        self._original_methods = {}
+        # self.reset()
+
+    # def reset(self):
+    #     """Reset all timing data"""
+    #     self.component_stats = defaultdict(lambda: {'total_time': 0, 'call_count': 0})
+    #     self._local = threading.local()
+
     def reset(self):
-        """Reset all timing data"""
-        self.call_data = []  # List of (component, start_time, end_time, parent_idx)
-        self.component_stats = defaultdict(lambda: {'total_time': 0, 'call_count': 0, 'self_time': 0})
-        
-    @property
-    def _call_stack(self):
-        """Thread-local call stack"""
-        if not hasattr(self._local, 'stack'):
-            self._local.stack = []
-        return self._local.stack
-        
+        """Reset all timing data and re-apply profiling decorators"""    
+        self.component_stats.clear()
+        self._local = threading.local()
+        # for cls, methods in self._original_methods.items():
+        #     for method_name, original_method in methods.items():
+        #         profiled_method = profile(f"TorchBoard.{method_name}")(original_method)
+        #         setattr(cls, method_name, profiled_method)
+
     def enable(self):
         self.enabled = True
-        
+
     def disable(self):
         self.enabled = False
-        
+
     @contextmanager
     def time_block(self, component: str):
         """Context manager for timing code blocks"""
         if not self.enabled:
             yield
             return
-            
+
         start_time = time.perf_counter()
-        parent_idx = self._call_stack[-1] if self._call_stack else None
-        current_idx = len(self.call_data)
-        
-        # Push to stack
-        self._call_stack.append(current_idx)
-        
         try:
             yield
         finally:
             end_time = time.perf_counter()
             elapsed = end_time - start_time
-            
-            # Record the call
-            self.call_data.append((component, start_time, end_time, parent_idx))
-            
-            # Update stats
+            if not hasattr(self, 'component_stats'):
+                self.component_stats = defaultdict(lambda: {'total_time': 0, 'call_count': 0})
             self.component_stats[component]['total_time'] += elapsed
             self.component_stats[component]['call_count'] += 1
-            
-            # Pop from stack
-            self._call_stack.pop()
-    
-    def _compute_self_times(self):
-        """Compute self time (excluding children) for each component"""
-        # Reset self times
-        for stats in self.component_stats.values():
-            stats['self_time'] = stats['total_time']
-        
-        # Subtract child times from parents
-        for idx, (component, start, end, parent_idx) in enumerate(self.call_data):
-            if parent_idx is not None:
-                parent_component = self.call_data[parent_idx][0]
-                child_time = end - start
-                self.component_stats[parent_component]['self_time'] -= child_time
-    
-    def get_stats(self, self_time_only=True) -> Dict:
+
+    def get_stats(self) -> Dict:
         """Get timing statistics"""
         if not self.enabled:
             return {"profiling": "disabled"}
-        
-        self._compute_self_times()
-        
         stats = {}
         for component, data in self.component_stats.items():
-            time_key = 'self_time' if self_time_only else 'total_time'
             stats[component] = {
-                'time': data[time_key],
                 'total_time': data['total_time'],
-                'self_time': data['self_time'],
                 'call_count': data['call_count'],
-                'avg_time': data[time_key] / data['call_count'] if data['call_count'] > 0 else 0,
+                'avg_time': data['total_time'] / data['call_count'] if data['call_count'] > 0 else 0,
             }
         return stats
-    
-    def print_summary(self, top_n=10, self_time_only=True):
-        """Print clean timing summary without double-counting"""
-        if not self.enabled:
-            print("Profiling disabled")
-            return
-            
-        stats = self.get_stats(self_time_only)
+
+    def print_summary(self):
+        """Print summary organized hierarchically by naming convention"""
+        stats = self.get_stats()
         if not stats:
             print("No timing data collected")
             return
-            
-        print("\n" + "="*70)
-        print("BEAM SEARCH PROFILING SUMMARY")
-        print("="*70)
-        
-        time_key = 'time'
-        time_label = 'Self(s)' if self_time_only else 'Total(s)'
-        
-        # Sort by the chosen time metric
-        sorted_components = sorted(
-            stats.items(), 
-            key=lambda x: x[1][time_key], 
-            reverse=True
-        )[:top_n]
-        
-        print(f"{'Component':<30} {time_label:<10} {'Avg(ms)':<10} {'Calls':<8} {'%':<8}")
-        print("-" * 70)
-        
-        total_time = sum(data[time_key] for _, data in sorted_components)
-        
-        for component, data in sorted_components:
-            pct = (data[time_key] / total_time * 100) if total_time > 0 else 0
-            print(f"{component:<30} {data[time_key]:<10.3f} "
-                  f"{data['avg_time']*1000:<10.1f} {data['call_count']:<8} "
-                  f"{pct:<8.1f}")
+
+        # STEP PROFILING SUMMARY
+        step_total = sum(data['total_time'] for comp, data in stats.items() if comp.startswith("step."))
+        if step_total > 0:
+            print("\n" + "="*80)
+            print(f"STEP PROFILING SUMMARY (step total: {step_total:.3f}s)")
+            print("="*80)
+            print(f"{'Component':<45} {'Total(s)':<10} {'Calls':<8} {'Percentage':<12}")
+            print("-" * 80)
+            for component, data in sorted(stats.items(), key=lambda x: -x[1]['total_time']):
+                if component.startswith("step."):
+                    pct = (data['total_time'] / step_total * 100) if step_total > 0 else 0
+                    print(f"{component:<45} {data['total_time']:<10.3f} "
+                          f"{data['call_count']:<8} "
+                          f"{pct:<.1f}%")
+
+        # TORCHBOARD PROFILING SUMMARY (only TorchBoard.{method})
+        torchboard_methods = {k: v for k, v in stats.items() if k.startswith("TorchBoard.")}
+        # torchboard_total = stats.get("step.torch_board", {}).get("total_time", 0)
+        torchboard_total = (
+            stats.get("step.torch_board", {}).get("total_time", 0)
+            or stats.get("full_run", {}).get("total_time", 0)
+        )
+        if torchboard_total > 0:
+            print("\n" + "="*80)
+            print(f"TORCHBOARD PROFILING SUMMARY (TorchBoard total: {torchboard_total:.3f}s)")
+            print("="*80)
+            print(f"{'Component':<45} {'Total(s)':<10} {'Calls':<8} {'Percentage':<12}")
+            print("-" * 80)
+            for component, data in sorted(torchboard_methods.items(), key=lambda x: -x[1]['total_time']):
+                pct = (data['total_time'] / torchboard_total * 100) if torchboard_total > 0 else 0
+                print(f"{component:<45} {data['total_time']:<10.3f} "
+                      f"{data['call_count']:<8} "
+                      f"{pct:<.1f}%")
+
+        # Level 2: total
+        total_time = sum(data['total_time'] for data in stats.values())
+        print("\n" + "="*80)
+        print(f"PROFILING SUMMARY (total time: {total_time:.3f}s)")
+        print("="*80)
+        print(f"{'Component':<45} {'Total(s)':<10} {'Calls':<8} {'Percentage':<12}")
+        print("-"*80)
+        for component, data in sorted(stats.items(), key=lambda x: -x[1]['total_time']):
+            pct = (data['total_time'] / total_time * 100) if total_time > 0 else 0
+            print(f"{component:<45} {data['total_time']:<10.3f} "
+                  f"{data['call_count']:<8} "
+                  f"{pct:<.1f}%")
 
 # Global profiler instance
-profiler = HierarchicalProfiler()
+profiler = SimpleProfiler()
 
 def profile(component_name: str):
-    """Simple decorator that only profiles at method/function boundaries"""
+    """Simple decorator that profiles at method/function boundaries"""
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -142,19 +133,36 @@ def profile(component_name: str):
         return wrapper
     return decorator
 
+# def auto_profile_class(cls, method_profiles):
+#     """
+#     Automatically apply profiling decorators to class methods
+
+#     Args:
+#         cls: The class to modify
+#         method_profiles: Dict mapping method names to profile component names
+#     """
+#     for method_name, component_name in method_profiles.items():
+#         if hasattr(cls, method_name):
+#             original_method = getattr(cls, method_name)
+#             if callable(original_method):
+#                 # Apply the profile decorator
+#                 profiled_method = profile(component_name)(original_method)
+#                 setattr(cls, method_name, profiled_method)
+#     return cls
+
 def auto_profile_class(cls, method_profiles):
-    """
-    Automatically apply profiling decorators to class methods
-    
-    Args:
-        cls: The class to modify
-        method_profiles: Dict mapping method names to profile component names
-    """
+    if cls not in profiler._original_methods:
+        profiler._original_methods[cls] = {}
     for method_name, component_name in method_profiles.items():
         if hasattr(cls, method_name):
             original_method = getattr(cls, method_name)
-            if callable(original_method):
-                # Apply the profile decorator
-                profiled_method = profile(component_name)(original_method)
-                setattr(cls, method_name, profiled_method)
+            # Skip if already wrapped
+            if getattr(original_method, "_is_profiled", False):
+                continue
+            # Save original
+            profiler._original_methods[cls][method_name] = original_method
+            # Wrap
+            profiled_method = profile(component_name)(original_method)
+            profiled_method._is_profiled = True
+            setattr(cls, method_name, profiled_method)
     return cls

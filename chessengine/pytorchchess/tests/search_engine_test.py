@@ -42,6 +42,10 @@ if __name__ == "__main__":
     model.eval()
     model.to(DEVICE)
 
+    if DEVICE.type == "cuda":
+        model = torch.compile(model)
+        print("Model compiled for CUDA")
+
     # Initialize beam search engine
     if args.large:
         expansion_factors = torch.tensor([8, 5, 3, 2, 1, 1, 1], device=DEVICE)  # L = 7 (odd depth)
