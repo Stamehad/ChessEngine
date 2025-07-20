@@ -427,15 +427,16 @@ class PseudoMoveGenerator:
             KING_SIDE_TO = torch.tensor([6, 62], dtype=torch.long, device=self.device) # (2,)
             QUEEN_SIDE_TO = torch.tensor([2, 58], dtype=torch.long, device=self.device) # (2,)
             
-            KING_FROM = torch.where(side == 1, KING_SQ[0], KING_SQ[1]) # (B, 1)
+            side = side.squeeze(-1) # (B,)
+            KING_FROM = torch.where(side == 1, KING_SQ[0], KING_SQ[1]) # (B,)
             
-            kingside_to = torch.where(side == 1, KING_SIDE_TO[0], KING_SIDE_TO[1])
-            queenside_to = torch.where(side == 1, QUEEN_SIDE_TO[0], QUEEN_SIDE_TO[1])
+            kingside_to = torch.where(side == 1, KING_SIDE_TO[0], KING_SIDE_TO[1]) # (B,)
+            queenside_to = torch.where(side == 1, QUEEN_SIDE_TO[0], QUEEN_SIDE_TO[1]) # (B,)
 
             # Collect valid castling moves
             # ks_idx = torch.nonzero(kingside).squeeze(-1) 
             # qs_idx = torch.nonzero(queenside).squeeze(-1)
-            
+
             ks_idx = torch.nonzero(kingside, as_tuple=True)[0]
             qs_idx = torch.nonzero(queenside, as_tuple=True)[0]
 
@@ -448,14 +449,14 @@ class PseudoMoveGenerator:
                 
             if len(qs_idx) > 0:
                 qs_moves[torch.arange(len(qs_idx)), queenside_to[qs_idx]] = 7
-                
+            
             kg_side = side[ks_idx].view(-1)
             kg_ids = torch.where(kg_side == 1, WK, BK)
             qg_side = side[qs_idx].view(-1)
             qg_ids = torch.where(qg_side == 1, WK, BK)
 
             moves = torch.cat([ks_moves, qs_moves], dim=0) # (N, 64)
-            sq = torch.cat([KING_FROM[ks_idx, 0], KING_FROM[qs_idx, 0]], dim=0) # (N,)
+            sq = torch.cat([KING_FROM[ks_idx], KING_FROM[qs_idx]], dim=0) # (N,)
             board = torch.cat([ks_idx, qs_idx], dim=0) # (N,)
             ids = torch.cat([kg_ids, qg_ids], dim=0) # (N,)
 

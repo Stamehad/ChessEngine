@@ -29,7 +29,7 @@ def get_check_blockers(sq: torch.Tensor, n: torch.Tensor, sq2=None, two_pawn_pus
         
         # when n == -1 (no ray), use only sq2 as a mask
         sq2_mask = torch.nn.functional.one_hot(sq2, 64).view(-1, 8, 8) # (N, 8, 8)
-        mask += ((n == -1) * sq2_mask.bool()) # (N, 8, 8)
+        mask |= ((n == -1) & sq2_mask.bool()) # (N, 8, 8)
 
     mask = mask.view(-1, 64).to(torch.uint8) # (N, 64)
 

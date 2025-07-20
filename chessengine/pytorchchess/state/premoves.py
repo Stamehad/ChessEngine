@@ -58,7 +58,7 @@ class PreMoves:
         move_idx, pin_idx = match.nonzero(as_tuple=True)  # (M,)
 
         ray_masks = pin.pin_mask()[pin_idx]    # (M, 64)
-        self.moves[move_idx] &= ray_masks  # Apply ray mask to allowed moves
+        self.moves[move_idx] *= ray_masks  # Apply ray mask to allowed moves
 
 
     def filter_by_check(self, check: CheckData):

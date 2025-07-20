@@ -27,6 +27,7 @@ class ToChessBoard:
         Print a visual board representation using python-chess.
         Uses SVG rendering if in a Jupyter environment; falls back to ASCII.
         """
+        assert 0 <= index < len(self.board_tensor), "Index out of bounds for board_tensor"
         board, lastmove = self.to_chess_board(index, flip=flip)
         try:
             orientation = chess.WHITE

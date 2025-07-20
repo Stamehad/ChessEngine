@@ -13,7 +13,7 @@ class PinData:
     board: torch.Tensor              # (N_pin,)
     
     def pin_mask(self):
-        return get_check_blockers(self.king_sq, self.ray) # (N_pin, 64)
+        return get_check_blockers(self.king_sq, self.ray) # (N_pin, 64) uint8
     
     def clone(self):
         # Return a copy of the PinData object
@@ -76,7 +76,7 @@ class CheckData:
         # The reduced mask is a multiplication of the check masks for each entry.
         masks = get_check_blockers(
             self.king_sq, self.attack_ray, self.attacker_sq, self.two_pawn_push_check
-            ) # (N_check, 64)
+            ) # (N_check, 64) uint8
 
         # uniq_boards: (N_single,)
         # inv: (N_check,) each entry ∈ [0..N_single-1]

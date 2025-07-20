@@ -9,6 +9,7 @@
 # ------------------------------------------------------------------
 import torch
 from .pseudo_move_gen import PseudoMoveGenerator
+from .pseudo_move_gen_new import PseudoMoveGeneratorNew
 from .in_check import InCheck
 from pytorchchess.utils import state_from_board, encode
 from pytorchchess.state import GameState, LegalMoves
@@ -35,7 +36,15 @@ class BoardCache:
         new_cache.attack_map = self.attack_map[idx].clone() if self.attack_map is not None else None
         return new_cache
 
-class TorchBoard(PseudoMoveGenerator, InCheck, ToChessBoard, PushMoves, FeatureTensor, StoppingCondition):
+class TorchBoard(
+        PseudoMoveGenerator, 
+        PseudoMoveGeneratorNew, 
+        InCheck, 
+        ToChessBoard, 
+        PushMoves, 
+        FeatureTensor, 
+        StoppingCondition
+    ):
     def __init__(self, board_tensor: torch.Tensor, state: GameState, device = torch.device("cuda"), compute_cache: bool = True):
         assert isinstance(board_tensor, torch.Tensor), "board_tensor must be a torch.Tensor"
         assert board_tensor.shape[-2:] == (8, 8), "boards must be shape (B, 8, 8)"
@@ -173,6 +182,10 @@ class TorchBoard(PseudoMoveGenerator, InCheck, ToChessBoard, PushMoves, FeatureT
         if get_tensor:
             self.cache.legal_moves.get_tensor(self.board_flat)
         return self.cache.legal_moves
+    
+    def get_legal_moves_new(self):
+        premoves, in_check = self.get_moves() # PreMoves
+        return premoves, in_check, LegalMoves.from_premoves(premoves, len(self))  # Update board_tensor and state
     
     def get_topk_legal_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
         lm = self.get_legal_moves(get_tensor=True)  # LegalMoves
