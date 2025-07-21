@@ -44,19 +44,21 @@ if __name__ == "__main__":
     boards = TorchBoard.from_board_list(boards, device=DEVICE)
 
     # Warm-up GPU
+    print("Starting warm-up...")
     for _ in range(10):
         _, _, lm = boards.get_legal_moves_new()
         is_terminal, result = boards.is_game_over()
         if is_terminal.any():
             boards = boards[~is_terminal]
             lm = lm.select(~is_terminal)
-        logits = torch.zeros_like(lm.encoded, dtype=torch.float32)
-        ks = torch.ones(lm.encoded.shape[0], dtype=torch.long)
+        logits = torch.zeros_like(lm.encoded, dtype=torch.float32, device=DEVICE)
+        ks = torch.ones(lm.encoded.shape[0], dtype=torch.long, device=DEVICE)
         moves, b_idx, _, _ = lm.sample_k(logits, ks)
         boards = boards.push(moves, b_idx)
     torch.cuda.synchronize()
 
     # Start profiling
+    print("Starting profiling...")
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
         record_shapes=True,
@@ -70,8 +72,8 @@ if __name__ == "__main__":
                 boards = boards[~is_terminal]
                 lm = lm.select(~is_terminal)
 
-            logits = torch.zeros_like(lm.encoded, dtype=torch.float32)  # Simulate logits
-            ks = torch.ones(lm.encoded.shape[0], dtype=torch.long)  # Sample one move per board
+            logits = torch.zeros_like(lm.encoded, dtype=torch.float32, device=DEVICE)  # Simulate logits
+            ks = torch.ones(lm.encoded.shape[0], dtype=torch.long, device=DEVICE)  # Sample one move per board
             moves, b_idx, _, _ = lm.sample_k(logits, ks)
             boards = boards.push(moves, b_idx)
 

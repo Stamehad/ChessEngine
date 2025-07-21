@@ -42,7 +42,7 @@ def _gen_shift_masks(dtype=torch.uint8):
                  [23, 15,  7,  0,  3, 11, 19, 27],
                  [ 0,  0,  6,  5,  4,  0,  0,  0],
                  [ 0, 14,  0, 13,  0, 12,  0,  0],
-                 [22,  0,  0, 21,  0,  0, 20,  0]])
+                 [22,  0,  0, 21,  0,  0, 20,  0]]
 
     ROOK: odd part of QUEEN
     BISHOP: even part of QUEEN
@@ -123,17 +123,6 @@ MOVES = torch.stack([
 ], dim=0)  # (12, 64, 8, 8)
 MOVES = MOVES.view(12, 64, 64)
 
-
-# SHORT_RANGE_MOVES = torch.stack([
-#     KNIGHT_MOVES, KING_MOVES, PAWN_PUSH_W + PAWN_CAP_W, PAWN_PUSH_B + PAWN_CAP_B
-#     ], dim=0)  # shape (4, 64, 8, 8)
-# SHORT_RANGE_MOVES = SHORT_RANGE_MOVES.view(4, 64, 64)  # shape (4, 64, 64)
-
-# LONG_RANGE_MOVES = torch.stack([
-#     (QUEEN_MOVES % 2 == 0) * QUEEN_MOVES, (QUEEN_MOVES % 2 == 1) * QUEEN_MOVES, QUEEN_MOVES
-#     ], dim=0)  # shape (3, 64, 8, 8)
-# LONG_RANGE_MOVES = LONG_RANGE_MOVES.view(3, 64, 64)  # shape (3, 64, 64)
-
 PROMOTION_MASK = torch.cat([
     torch.ones(1, 8, dtype=torch.uint8), 
     torch.zeros(1, 48, dtype=torch.uint8), 
@@ -161,27 +150,12 @@ CASTLING_ATTACK_ZONES = torch.stack([
 
 KING_TO = torch.tensor([6, 2, 62, 58], dtype=torch.long)  # King to square after castling (white: 6, black: 58)
 
-# CASTLING_ATTACK_ZONES = torch.cat([
-#     torch.tensor([0, 0, 1, 1, 1, 1, 1, 0], dtype=torch.uint8),
-#     torch.zeros(48, dtype=torch.uint8),
-#     torch.tensor([0, 0, 1, 1, 1, 1, 1, 0], dtype=torch.uint8)
-# ], dim=0).to(dtype=torch.uint8) # (64,)
-
 # Function to move all constants to a specified device
 def move_constants_to(device):
-    global KNIGHT_MOVES, KING_MOVES, PAWN_CAP_W, PAWN_CAP_B, PAWN_PUSH_W, PAWN_PUSH_B, QUEEN_MOVES
-    global SHORT_RANGE_MOVES, LONG_RANGE_MOVES, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES
+    global MOVES, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES, KING_TO
 
-    KNIGHT_MOVES = KNIGHT_MOVES.to(device)
-    KING_MOVES = KING_MOVES.to(device)
-    PAWN_CAP_W = PAWN_CAP_W.to(device)
-    PAWN_CAP_B = PAWN_CAP_B.to(device)
-    PAWN_PUSH_W = PAWN_PUSH_W.to(device)
-    PAWN_PUSH_B = PAWN_PUSH_B.to(device)
-    QUEEN_MOVES = QUEEN_MOVES.to(device)
-
-    SHORT_RANGE_MOVES = SHORT_RANGE_MOVES.to(device)
-    LONG_RANGE_MOVES = LONG_RANGE_MOVES.to(device)
+    MOVES = MOVES.to(device)
     PROMOTION_MASK = PROMOTION_MASK.to(device)
     CASTLING_ZONES = CASTLING_ZONES.to(device)
     CASTLING_ATTACK_ZONES = CASTLING_ATTACK_ZONES.to(device)
+    KING_TO = KING_TO.to(device)

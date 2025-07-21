@@ -160,7 +160,7 @@ class PseudoMoveGeneratorNew:
         pcs               = spread_ids[nb, nc] - 1           # range 0..11
         sqs               = spread_sq [nb, nc]
 
-        geo_moves         = MOVES[pcs, sqs]                 # (N, 64)
+        geo_moves         = c.MOVES[pcs, sqs]                 # (N, 64)
         geo[nb, nc]       = geo_moves
 
         # ------------------------------------------------------------------
@@ -263,7 +263,7 @@ class PseudoMoveGeneratorNew:
         # For computing pin data
         king_sq = (board == torch.where(white, WK, BK))            # (B,64)
         king_b, king_sq = king_sq.nonzero(as_tuple=True)           # (B,)
-        king_rays = MOVES[4, king_sq].view(1, -1, 1, 64)           # (1,B,1,64) rays from king square
+        king_rays = c.MOVES[4, king_sq].view(1, -1, 1, 64)           # (1,B,1,64) rays from king square
 
         # Work only on slider channels
         geo_slider = (geo * is_slider).unsqueeze(0)                # (1,B,P,64)
@@ -387,15 +387,15 @@ class PseudoMoveGeneratorNew:
         moves[bs, ps] *= ((moves[bs, ps] != dir[bs, 0]) & (moves[bs, ps] != dir[bs, 1]))
 
         # Board-level allowed squares initialised all-True
-        combined = torch.ones_like(board_allowed, dtype=torch.bool) 
+        combined = torch.ones_like(board_allowed, dtype=torch.uint8) 
         combined.scatter_reduce_(
                 dim        = 0,
                 index      = b_ray_check.unsqueeze(1).expand(-1, 64),   # (N_check,64)
-                src        = king_slider_rays[b_ray_check, slider_chan],# (N_check,64)
+                src        = king_slider_rays[b_ray_check, slider_chan].to(torch.uint8),# (N_check,64)
                 reduce     = "amin",    # amin on bool == logical AND
                 include_self = True
         )
-        board_allowed &= combined
+        board_allowed &= combined.bool()
         
         # Only filter friendly channels (side to play) excluding king
         b_check = in_check.nonzero(as_tuple=True)[0]
@@ -426,7 +426,7 @@ class PseudoMoveGeneratorNew:
         castling &= self.state.castling.to(castling.dtype)                      # (B,4)  castling rights
 
         castling = torch.where(self.side_to_move == 1, castling[:, :2], castling[:, 2:]) # (B,2) 
-        king_to = torch.where(self.side_to_move == 1, KING_TO[:2], KING_TO[2:])          # (B,2)
+        king_to = torch.where(self.side_to_move == 1, c.KING_TO[:2], c.KING_TO[2:])          # (B,2)
 
         b_casting, castling_side = castling.nonzero(as_tuple=True)  # (N_castling,)
         king_chan = king_chan[b_casting]  # (N_castling,)
