@@ -1,8 +1,11 @@
+import importlib
 import torch
 import chess
 from pytorchchess import TorchBoard
-import pytorchchess.utils.constants as const
+import pytorchchess.utils.constants_new as const
 import pytorchchess.torch_board.pseudo_move_gen_new as pmg_new
+
+importlib.reload(pmg_new)
 
 
 if __name__ == "__main__":
@@ -38,6 +41,16 @@ if __name__ == "__main__":
             return original_get_moves(self, *args, **kwargs)
 
     pmg_new.PseudoMoveGeneratorNew.get_moves = profiled_get_moves
+
+    if COMPILE:
+        print("compiling...")
+        import torch._dynamo
+        
+        torch._dynamo.config.suppress_errors = False
+        torch._dynamo.reset()  # Clear cached compiled graphs
+        pmg_new.PseudoMoveGeneratorNew.get_moves = torch.compile(
+            pmg_new.PseudoMoveGeneratorNew.get_moves, mode="default"
+        )
 
     # Create TorchBoard with many positions
     boards = [chess.Board() for _ in range(B)]
