@@ -123,6 +123,10 @@ MOVES = torch.stack([
 ], dim=0)  # (12, 64, 8, 8)
 MOVES = MOVES.view(12, 64, 64)
 
+empty_moves = torch.zeros(1, 64, 64, dtype=MOVES.dtype, device=MOVES.device)
+
+MOVES2 = torch.cat([empty_moves, MOVES], dim=0) # (13, 64, 64)
+
 PROMOTION_MASK = torch.cat([
     torch.ones(1, 8, dtype=torch.uint8), 
     torch.zeros(1, 48, dtype=torch.uint8), 
@@ -152,9 +156,10 @@ KING_TO = torch.tensor([6, 2, 62, 58], dtype=torch.long)  # King to square after
 
 # Function to move all constants to a specified device
 def move_constants_to(device):
-    global MOVES, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES, KING_TO
+    global MOVES, MOVES2, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES, KING_TO
 
     MOVES = MOVES.to(device)
+    MOVES2 = MOVES2.to(device)
     PROMOTION_MASK = PROMOTION_MASK.to(device)
     CASTLING_ZONES = CASTLING_ZONES.to(device)
     CASTLING_ATTACK_ZONES = CASTLING_ATTACK_ZONES.to(device)
