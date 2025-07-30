@@ -16,8 +16,12 @@ class ToChessBoard:
         ep = self.state.ep[index].item()
         last_move = self.state.previous_moves[index] if self.state.previous_moves is not None else None
 
-        if last_move is not None:
+        # Handle padded move (32768 = 2^15)
+        if last_move is not None and int(last_move) != 32768:
             last_move = to_chess_move(last_move)
+        else:
+            last_move = None
+
 
         fen = tensor_to_fen(piece_tensor, side, castling, ep)
         return chess.Board(fen), last_move

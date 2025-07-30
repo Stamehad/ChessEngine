@@ -75,6 +75,35 @@ def to_chess_move(encoded_move: torch.Tensor) -> chess.Move:
         promo_piece = mapping[promo_type.item()]
     return chess.Move(from_sq, to_sq, promotion=promo_piece)
 
+def encode_move(move: chess.Move, board: chess.Board) -> int:
+    from_sq = move.from_square
+    to_sq = move.to_square
+
+    # Determine move type
+    if move is None:
+        move_type = 0
+    elif move.promotion:
+        move_type = {
+            chess.QUEEN: 1,
+            chess.ROOK: 2,
+            chess.BISHOP: 3,
+            chess.KNIGHT: 4
+        }.get(move.promotion, 0)
+    elif board.is_en_passant(move):
+        move_type = 5
+    else:
+        piece = board.piece_at(from_sq)
+        if piece is not None and abs(from_sq - to_sq) == 16 and piece.piece_type == chess.PAWN:
+            move_type = 5
+        elif board.is_kingside_castling(move):
+            move_type = 6
+        elif board.is_queenside_castling(move):
+            move_type = 7
+        else:
+            move_type = 0
+
+        return from_sq + to_sq * 64 + move_type * 4096
+
 def move_dtype(device=None):
     """Get appropriate move dtype based on device capabilities"""
     if device is None:

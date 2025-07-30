@@ -154,9 +154,16 @@ CASTLING_ATTACK_ZONES = torch.stack([
 
 KING_TO = torch.tensor([6, 2, 62, 58], dtype=torch.long)  # King to square after castling (white: 6, black: 58)
 
+MOVE_ENCODING = torch.zeros(64,64,dtype=torch.int16)
+l0 = torch.arange(64).view(-1,1)
+l1 = torch.arange(64).view(1,-1)
+
+MOVE_ENCODING[l0,l1] = (l0 + 64 * l1).to(torch.int16) # (64,64)
+
+
 # Function to move all constants to a specified device
 def move_constants_to(device):
-    global MOVES, MOVES2, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES, KING_TO
+    global MOVES, MOVES2, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES, KING_TO, MOVE_ENCODING
 
     MOVES = MOVES.to(device)
     MOVES2 = MOVES2.to(device)
@@ -164,3 +171,4 @@ def move_constants_to(device):
     CASTLING_ZONES = CASTLING_ZONES.to(device)
     CASTLING_ATTACK_ZONES = CASTLING_ATTACK_ZONES.to(device)
     KING_TO = KING_TO.to(device)
+    MOVE_ENCODING = MOVE_ENCODING.to(device)

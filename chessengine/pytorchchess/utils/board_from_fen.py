@@ -1,7 +1,7 @@
 import chess # type: ignore
 import torch
 from pytorchchess.state.game_state import GameState
-from pytorchchess.utils.utils import move_dtype
+from pytorchchess.utils.utils import move_dtype, encode_move
 
 def piece_to_index(piece):
     """Maps a chess.Piece to channel index (1-12), or 0 for empty"""
@@ -75,6 +75,25 @@ def get_fifty_move_clock(boards: list[chess.Board], device) -> torch.Tensor:
     fifty_move_clocks = torch.tensor([b.halfmove_clock for b in boards], dtype=torch.uint8, device=device)
     return fifty_move_clocks  # (B,)
 
+def get_previous_moves(boards: list[chess.Board], device) -> torch.Tensor:
+    """
+    Returns a (B,) int16 tensor encoding the previous move of each board.
+
+    Encoding:
+        move = from_sq + to_sq * 64 + move_type * 4096
+        If no previous move exists: move = 32768 (i.e., padding flag)
+    """
+    encoded_moves = []
+    for board in boards:
+        if board.move_stack:
+            last_move = board.peek()
+            encoded = encode_move(last_move, board)
+        else:
+            encoded = 32768  # padding flag (2^15)
+        encoded_moves.append(encoded)
+
+    return torch.tensor(encoded_moves, dtype=torch.int16, device=device)
+
 def state_from_board(boards: list[chess.Board], device = torch.device("cpu")) -> GameState:
     """
     Convert a list of chess.Board instances to a GameState object.
@@ -99,7 +118,8 @@ def state_from_board(boards: list[chess.Board], device = torch.device("cpu")) ->
     fifty_move_clock = get_fifty_move_clock(boards, device=device)  # (B,)
     position_history = torch.zeros((len(boards), 0), dtype=torch.long, device=device)  # (B, 0) - empty history for now
     
-    previous_moves = torch.tensor([-1]*ep.shape[0], dtype=move_dtype(device), device=device)  # (B,) - no previous moves
+    # previous_moves = torch.tensor([-1]*ep.shape[0], dtype=move_dtype(device), device=device)  # (B,) - no previous moves
+    previous_moves = get_previous_moves(boards, device) # (B,) int16
     
     return GameState(
         side_to_move=side,  # (B, 1)
