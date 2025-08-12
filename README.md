@@ -2,6 +2,11 @@
 
 This project implements a transformer-based chess engine designed to learn in a **self-supervised** manner and eventually integrate **reinforcement learning**. 
 
+### More reports
+- Data pipelining
+- Base training report: includng training curves and results
+- RL strategy (partial)
+
 ---
 
 ## ⚙️ Core Design Overview

@@ -487,48 +487,53 @@ class PseudoMoveGeneratorNew:
         knights = is_wn | is_bn                     # (B,64,1)
         kings   = is_wk | is_bk                     # (B,64,1)
 
-        short_range_threats = ((geo == 4) & pawns) | (geo.bool() & (knights | kings))  # (B,64,64)
-    
-        # -------- Pawn Moves ----------------------------------------------
         board = board.permute(0,2,1)        # (B,1,64)
-        push1 = (geo == 1) & (board == 0)
-        push2 = (geo == 2) & (board == 0)
-        shifted_push1 = torch.roll(push1, 8, -1) + torch.roll(push1, -8, -1)
-        push2 &= shifted_push1
-
-        pawn_pushes = pawns * (push1 + 5 * push2)                     # (B,64,64)
-
-        # Captures & en‑passant
-        ep_mask = (torch.arange(64, device=device) == self.ep.unsqueeze(-1))    # (B,64)
-        ep_mask = ep_mask.unsqueeze(-2)                                         # (B,1,64)
-
         side = self.side_to_move.unsqueeze(dim=-1)      # (B,1,1)
         occ_W = (board > 0) & (board < 7)   # (B,1,64)
         occ_B = (board > 6)                 # (B,1,64)
+
+        threats = ((geo == 4) & pawns) | (geo.bool() & (knights | kings))  # (B,64,64)
         
+        # -------- Short range moves ---------------------------------------
+        
+        # en‑passant
+        ep_mask = (torch.arange(64, device=device) == self.ep[..., None, None])    # (B,1,64)    
         ep_B = ep_mask & (side == 1)
         ep_W = ep_mask & (side == 0)
-
-        captures = (
-            ((occ_B + 5 * ep_B) * is_wp) +
-            ((occ_W + 5 * ep_W) * is_bp)
-        ) * (geo == 4) # (B,64,64)
         
-        # encoding: 
+        # pawn moves encoding: 
         # 1) single pawn push + standard captures -> 1
         # 2) two pawn pushes + en passant captures -> 5
-        # 3) promotions (by capture and push) -> 10
-        pawn_moves = pawn_pushes + captures                           # (B,64,64)
-        pawn_moves *= (1 + 9 * c.PROMOTION_MASK)  
-
-        # -------- Knight/King Moves ---------------------------------------
-        knight_moves = (~occ_W) * is_wn + (~occ_B) * is_bn
-        king_moves   = (~occ_W) * is_wk + (~occ_B) * is_bk
-
-        moves = pawn_moves + geo * (knight_moves + king_moves)        # (B,64,64)
+        # 3) promotions (by capture and push) -> 10         
+        
+        moves = (
+            # Pawn pushes and captures
+            (
+                pawns * (
+                    ((geo == 1) & (board == 0)).to(torch.uint8) + 
+                    5 * (
+                        (geo == 2) & (board == 0) &
+                        (
+                            torch.roll((geo == 1) & (board == 0), 8, -1) |
+                            torch.roll((geo == 1) & (board == 0), -8, -1)
+                        )
+                    ).to(torch.uint8)
+                ) + 
+                (
+                    (occ_B + 5 * ep_B) * is_wp +
+                    (occ_W + 5 * ep_W) * is_bp
+                ) * (geo == 4)
+            ) * (1 + 9 * c.PROMOTION_MASK)
+            +
+            # Knight and king moves
+            (
+                ((~occ_W) * (is_wn + is_wk)) +
+                ((~occ_B) * (is_bn + is_bk))
+            ) * geo
+        )
 
         # ------------------------------------------------------------------
-        # 2) Long-range sliders (bishop / rook / queen) – vectorised over (B,P)
+        # 2) Long-range sliders (bishop / rook / queen)
         # ------------------------------------------------------------------
         board = board.permute(0,2,1)                                # (B,64,1)
         is_bishop = (board == WB) | (board == BB)                   # (B,64,1)
@@ -536,52 +541,58 @@ class PseudoMoveGeneratorNew:
         is_queen  = (board == WQ) | (board == BQ)                   # (B,64,1)
         is_slider = is_bishop | is_rook | is_queen                  # (B,64,1)
 
+        # Ray-ID = value % 8
+        ray_id = torch.arange(8, device=device).view(1, 8, 1, 1)   # (1,8,1,1)
+        antipodals = (ray_id + 4) % 8                              # (1,8,1,1)
+
+        is_bishop_ray = is_bishop.unsqueeze(1) & (ray_id % 2 == 1)
+        is_rook_ray   = is_rook  .unsqueeze(1) & (ray_id % 2 == 0)
+        is_queen_ray  = is_queen .unsqueeze(1)
+        ray_mask      = is_bishop_ray | is_rook_ray | is_queen_ray  # (B,8,64,1)
+
         # Friendly / enemy occupancy per square
-        same_color     = torch.where(occ_W.permute(0,2,1), occ_W, occ_B)    # (B,64,64)
-        opposite_color = torch.where(occ_W.permute(0,2,1), occ_B, occ_W)    # (B,64,64)
+        same_color     = torch.where(occ_W.permute(0,2,1), occ_W, occ_B)    #. (B,64,64)
+        opposite_color = torch.where(occ_W.permute(0,2,1), occ_B, occ_W)    #. (B,64,64)
+        
+        occ = (occ_W | occ_B).unsqueeze(1)                                  # (B,1,1,64)
+        
+        # Work only on slider channels
+        geo = geo.unsqueeze(1)                                      # (B,1,64,64)
+        geo = geo * ray_mask                                        # (B,8,64,64)
+
+        # 128 = ray center. 
+        rays      = geo * ((geo % 8 == ray_id) | (geo == 128))      # (B,8,64,64)
+        
+        ray_blockers = geo * occ * (rays != 0)                       # (B,8,64,64)
+        ray_blockers.masked_fill_(ray_blockers == 0, 64)
+
+        # Note nearest <= 64, so slider own squares are not included
+        nearest = ray_blockers.min(dim=-1, keepdim=True)[0]     # (B,8,64,1)
+        slider_threats = ((rays <= nearest) & (rays != 0)).any(dim=1) # (B,64,64)
+        slider_threats &= is_slider
+
+        # Mask out friendly collisions
+        moves += (slider_threats & (~same_color))                # (B,64,64) 
+
+        threats |= slider_threats                                #. (B,64,64)
+        threatened  = (threats & opposite_color).any(dim=1)      #. (B,64)
+        threatening = (threats & opposite_color).any(dim=2)      #. (B,64)
 
         # From king (of side to move) generate rays from which king can be checked or pinned
         king_mask = (board == torch.where(side == 1, WK, BK))           # (B,64,1)
         king_sq   = torch.argmax(king_mask.long().squeeze(-1), dim=1)   # (B,)
-        king_rays = c.MOVES2[5, king_sq].view(1, -1, 1, 64)             # (1,B,1,64) rays from king square
+        king_rays = c.MOVES2[5, king_sq].view(-1, 1, 1, 64)             # (B,1,1,64) rays from king square
                                                                         # 5 = queen's channel for all possible rays
-
-        # Work only on slider channels
-        geo_slider = (geo * is_slider).unsqueeze(0)                 # (1,B,64,64)
-        blockers   = (geo_slider * (occ_W | occ_B))                 # (1,B,64,64)
-
-        # Ray-ID = value % 8
-        ray_id = torch.arange(8, device=device).view(8, 1, 1, 1)   # (8,1,1,1)
-        antipodals = (ray_id + 4) % 8                              # (8,1,1,1)
-
-        is_bishop_ray = is_bishop.unsqueeze(0) & (ray_id % 2 == 1)
-        is_rook_ray   = is_rook  .unsqueeze(0) & (ray_id % 2 == 0)
-        is_queen_ray  = is_queen .unsqueeze(0)
-        ray_mask      = is_bishop_ray | is_rook_ray | is_queen_ray  # (8,B,64,1)
-        geo_slider    = geo_slider * ray_mask                       # (8,B,64,64)
-
-        # 128 = ray center. king_slider_rays includes the slider square
-        rays      = geo_slider * ((geo_slider % 8 == ray_id) | (geo_slider == 128))      # (8,B,64,64)
-        king_rays = king_rays * ((king_rays % 8 == antipodals) & (king_rays != 128))     # (8,B,1,64)
-
-        king_slider_rays = (rays != 0) & (king_rays != 0)           # (8,B,64,64) pin data
-        ray_blockers = blockers * (rays != 0)                       # (8,B,64,64)
-        ray_blockers = ray_blockers.masked_fill(ray_blockers == 0, 64)
-
-        # Note nearest <= 64, so slider own squares are not included
-        nearest = ray_blockers.min(dim=-1, keepdim=True)[0]     # (8,B,64,1)
-        slider_threats = (rays <= nearest) & (rays != 0)        # (8,B,64,64)
-        slider_threats = slider_threats.any(dim=0)              # (B,64,64) bool
-
-        # Mask out friendly collisions
-        moves += (slider_threats & (~same_color))               # (B,64,64) 
-
+        # king_slider_rays includes the slider square
+        king_rays = king_rays * ((king_rays % 8 == antipodals) & (king_rays != 128))     # (B,8,1,64)
+        king_slider_rays = (rays != 0) & (king_rays != 0)            #. (B,8,64,64)
+        
         # ------------------------------------------------------------------
         # 3) Filter king moves
         # ------------------------------------------------------------------
-        threats = short_range_threats | slider_threats          # (B,64,64)
-        enemy_channels = torch.where(side == 1, occ_B, occ_W) # (B,1,64)
-        enemy_channels = enemy_channels.permute(0,2,1)        # (B,64,1)
+        
+        enemy_channels = torch.where(side == 1, occ_B, occ_W)   # (B,1,64)
+        enemy_channels = enemy_channels.permute(0,2,1)          # (B,64,1)
     
         threats = threats & enemy_channels
         threats_board = (threats).any(dim=1)                    # (B,64)  any piece threatens square
@@ -598,16 +609,12 @@ class PseudoMoveGeneratorNew:
         board_allowed = torch.ones((B,64), dtype=torch.bool, device=device)
         board_allowed = (in_check_from_sq | ~in_check) # (B,64)
 
-        # in_check = in_check.unsqueeze(-1)                               # (B,1,1)
-        # two_pawn_push_check = in_check & ep_mask                        # (B,1,64)
-        # ep_check_removal = two_pawn_push_check & (moves == 5)           # (B,64,64)
-
         # ------------------------------------------------------------------
         # 5) Ray (slider) threats for pin and check
         # ------------------------------------------------------------------
         # Only one ray to king per slider is possible -> use `any` to accumulate
-        ray = king_slider_rays.any(dim=-1).permute(1,2,0) # (B,64,8)  rays to king
-        king_slider_rays = king_slider_rays.any(dim=0)  # (B,64,64) pin data
+        ray = king_slider_rays.any(dim=-1).permute(0,2,1) # (B,64,8)  rays to king
+        king_slider_rays = king_slider_rays.any(dim=1)  # (B,64,64) pin data
 
         # mask out channels of side to play, attack by opponent -> check and pin
         king_slider_rays &= enemy_channels  # (B,64,64) pin data
@@ -628,27 +635,21 @@ class PseudoMoveGeneratorNew:
         # pinned_piece[b,t,s] = True if slider on s pines a piece on t (for batch item b)
         pinned_piece = (opp_on_ray & is_pin_ray).permute(0,2,1)             # (B,64,64) 
         pin = torch.argmax(pinned_piece.int(), dim=-1,keepdim=True)         # (B,64,1)
-        
-        # pin_ray = king_slider_rays[b_idx.view(-1,1,1), pin, t]              # (B,64,64)
         pinned_piece = pinned_piece.any(dim=-1, keepdim=True)               # (B,64,1)
         
-        # pin_ray = pin_ray | (~pinned_piece)
-        # moves *= pin_ray
-
         moves *= (king_slider_rays[b_idx.view(-1,1,1), pin, t] | (~pinned_piece))
 
         # -------- filter by check -------------------------------------------
-        slider_check_ray = (king_slider_rays * is_check_ray) | (~is_check_ray)  # (B,64,64)
-        board_allowed &= slider_check_ray.all(dim=1)                            # (B,64)
+        # slider_check_ray = (king_slider_rays * is_check_ray) | (~is_check_ray)  # (B,64,64)
+        # board_allowed &= slider_check_ray.all(dim=1)                            # (B,64)
+
+        board_allowed &= (
+            (king_slider_rays * is_check_ray) | (~is_check_ray)
+        ).all(dim=1)                                                            # (B,64)
 
         # when in check by a slider the sq behind the king is disallowed
         ray = ray.long().argmax(dim=-1, keepdim=True)      # (B,64,1)
         ray[ray == 0] = 8                           # set ray=0 -> ray=8
-
-        # move_filter = moves[b_idx, king_sq].unsqueeze(1) == ray         # (B,64,64)
-        # move_filter = (~move_filter & is_check_ray) | (~ is_check_ray)  # (B,64,64)
-        # move_filter = move_filter.all(dim=1)                            # (B,64)
-        # moves[b_idx, king_sq] *= move_filter
 
         moves[b_idx, king_sq] *= (
             (~(moves[b_idx, king_sq].unsqueeze(1) == ray) & is_check_ray) | (~is_check_ray)
@@ -778,8 +779,8 @@ class PseudoMoveGeneratorNew:
 
         x[:,:,13] = side.squeeze(-2)
         x[:,:,14] = in_check.squeeze(-1).to(torch.uint8)
-        x[:,:,15] = (threats & opposite_color).any(dim=1).to(torch.uint8)
-        x[:,:,16] = (threats & opposite_color).any(dim=2).to(torch.uint8)
+        x[:,:,15] = threatened.to(torch.uint8)
+        x[:,:,16] = threatening.to(torch.uint8)
         x[:,:,17] = (friendly_sq & any_moves).to(torch.uint8)
         x[:,:,18] = self.state.castling[:, :2].any(dim=-1, keepdim=True)
         x[:,:,19] = self.state.castling[:, 2:].any(dim=-1, keepdim=True)
