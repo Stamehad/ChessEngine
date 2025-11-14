@@ -182,8 +182,9 @@ class LegalMoves:
             f, r = idx % 8, idx // 8
             return f"{file_map[f]}{rank_map[r]}"
 
-        from_notation = [[idx_to_coord(idx.item()) for idx in row] for row in from_sq]
-        to_notation = [[idx_to_coord(idx.item()) for idx in row] for row in to_sq]
+        from_notation = [[idx_to_coord(idx.item()) for idx,m in zip(row, ms) if m != -1] for row, ms in zip(from_sq, moves)]
+        to_notation = [[idx_to_coord(idx.item()) for idx,m in zip(row, ms) if m != -1] for row,ms in zip(to_sq, moves)]
+        move_type = [[m for m in ms if m != -1] for ms in move_type]
 
         return from_notation, to_notation, move_type
     

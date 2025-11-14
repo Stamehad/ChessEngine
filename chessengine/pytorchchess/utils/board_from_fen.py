@@ -89,7 +89,7 @@ def get_previous_moves(boards: list[chess.Board], device) -> torch.Tensor:
             last_move = board.peek()
             encoded = encode_move(last_move, board)
         else:
-            encoded = 32768  # padding flag (2^15)
+            encoded = -1  # padding flag (-1)
         encoded_moves.append(encoded)
 
     return torch.tensor(encoded_moves, dtype=torch.int16, device=device)

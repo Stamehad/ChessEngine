@@ -1,6 +1,6 @@
 import torch
 from pytorchchess.utils import int_to_squares, move_dtype
-from pytorchchess.state.game_state import GameState
+# from pytorchchess.state.game_state import GameState
 
 class PushMoves:
     """

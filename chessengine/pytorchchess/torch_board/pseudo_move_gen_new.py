@@ -1,10 +1,12 @@
 import torch
 import torch.nn.functional as F
 from pytorchchess.utils.constants_new import (
-    WP, WN, WB, WR, WQ, WK, BP, BN, BB, BR, BQ, BK, KING_TO, MOVES
+    WP, WN, WB, WR, WQ, WK, BP, BN, BB, BR, BQ, BK, MOVES, #KING_TO, 
     )
 from pytorchchess.state.premoves import PreMoves, Pieces
+from pytorchchess.state.legal_moves import LegalMoves
 import pytorchchess.utils.constants_new as c
+from pytorchchess.utils.utils import move_dtype
 import importlib
 
 importlib.reload(c)
@@ -452,7 +454,7 @@ class PseudoMoveGeneratorNew:
 
         return premoves, in_check  # PreMoves, (B,P)
     
-    def get_moves_fused(self, b_i):
+    def get_moves_fused(self):
         """
         1.  Take self.board_flat of shape (B,64)           – encoded 0-12
         2.  Spread it to (B,32,64) so each slider/piece
@@ -607,7 +609,10 @@ class PseudoMoveGeneratorNew:
         in_check = (in_check_from_sq & ~is_slider.squeeze(-1)).any(dim=-1, keepdim=True) # (B,1)
 
         board_allowed = torch.ones((B,64), dtype=torch.bool, device=device)
-        board_allowed = (in_check_from_sq | ~in_check) # (B,64)
+        non_slider_checks = in_check_from_sq & ~is_slider.squeeze(-1)
+        board_allowed = non_slider_checks | ~in_check # (B,64)
+
+        #board_allowed = (in_check_from_sq | ~in_check) # (B,64)
 
         # ------------------------------------------------------------------
         # 5) Ray (slider) threats for pin and check
@@ -630,6 +635,8 @@ class PseudoMoveGeneratorNew:
         # ray includes slider. ally/opp are relative to slider.
         is_check_ray = (num_same == 1) & (num_opp == 0)        # (B,64,1)
         is_pin_ray   = (num_same == 1) & (num_opp == 1)        # (B,64,1)
+
+        in_check |= is_check_ray.any(dim=-2)
 
         # -------- filter by pin ---------------------------------------------
         # pinned_piece[b,t,s] = True if slider on s pines a piece on t (for batch item b)
@@ -702,7 +709,6 @@ class PseudoMoveGeneratorNew:
 
         friendly_sq = torch.where(side==1, occ_W, occ_B).view(-1,64)    # (B,64)
         any_moves = (moves != 0).any(dim=-1)                            # (B,64) any move in sq
-        s = (friendly_sq & any_moves)[b_i].nonzero(as_tuple=True)[0] # (N_moves)
 
         # ------------------------------------------------------------------
         # 7) Legal moves encoding
@@ -725,8 +731,6 @@ class PseudoMoveGeneratorNew:
                                                         #    but in realistic games this is exceedingly rare.
                                                         # 2) Using topk is an efficient way to filter the moves.
         lm16 = lm16.masked_fill_(lm16 == 0, -1)
-
-        print(lm16[b_i])
 
 
         # ------------------------------------------------------------------
@@ -767,7 +771,6 @@ class PseudoMoveGeneratorNew:
         lm_tensor.masked_fill_((lm16 == -1) | (lm_tensor == 0), -100)
         lm_tensor.masked_fill_(lm_tensor == 7, 0)
         lm_tensor = lm_tensor.to(torch.int8)
-        print(lm_tensor[b_i,:10].view(-1,8,8).flip(1))
 
         # ------------------------------------------------------------------
         # 9) feature tensor
@@ -785,9 +788,18 @@ class PseudoMoveGeneratorNew:
         x[:,:,18] = self.state.castling[:, :2].any(dim=-1, keepdim=True)
         x[:,:,19] = self.state.castling[:, 2:].any(dim=-1, keepdim=True)
         x[:,:,20] = ep_mask.squeeze(-2).to(torch.uint8)
-        
-        
-        return moves[b_i,s], in_check_from_sq[b_i]
+
+        # ------------------------------------------------------------------
+        # 10) Package results
+        # ------------------------------------------------------------------
+        encoded = lm16.squeeze(-1).to(move_dtype(device))                # (B, L_max)
+        mask = encoded != -1                                             # (B, L_max)
+        lm_tensor = lm_tensor.permute(0, 2, 1).contiguous()              # (B, 64, L_max)
+        legal_moves = LegalMoves(encoded=encoded, mask=mask, tensor=lm_tensor)
+
+        feature_tensor = x.view(B, 8, 8, 21).contiguous()
+
+        return legal_moves, feature_tensor
         
         # b, s = (friendly_sq & any_moves).nonzero(as_tuple=True)         # (N_moves,)
         # premoves = PreMoves(

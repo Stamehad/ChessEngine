@@ -70,9 +70,9 @@ class TorchBoard(
     def __repr__(self):
         bsz = self.board_tensor.shape[0]
         device = self.device
-        stm_str = self.state.side_to_move.tolist() if bsz < 10 else f"<{bsz} values>"
-        plys_str = self.state.plys.tolist() if bsz < 10 else f"<{bsz} values>"
-        castling_str = self.state.castling.tolist() if bsz < 10 else f"<{bsz} values>"
+        # stm_str = self.state.side_to_move.tolist() if bsz < 10 else f"<{bsz} values>"
+        # plys_str = self.state.plys.tolist() if bsz < 10 else f"<{bsz} values>"
+        # castling_str = self.state.castling.tolist() if bsz < 10 else f"<{bsz} values>"
         cache_fields = []
         if hasattr(self, "cache") and self.cache:
             for field in ["check_info", "pre_moves", "legal_moves", "attack_map"]:
@@ -186,6 +186,13 @@ class TorchBoard(
     def get_legal_moves_new(self):
         premoves, in_check = self.get_moves() # PreMoves
         return premoves, in_check, LegalMoves.from_premoves(premoves, len(self))  # Update board_tensor and state
+
+    def get_legal_moves_fused(self, return_features: bool = False):
+        """Return legal moves (and optional feature tensor) via the fused kernel."""
+        legal_moves, feature_tensor = self.get_moves_fused()
+        if return_features:
+            return legal_moves, feature_tensor
+        return legal_moves
     
     def get_topk_legal_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
         lm = self.get_legal_moves(get_tensor=True)  # LegalMoves

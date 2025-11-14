@@ -76,9 +76,9 @@ def test_no_memory_leak():
 
 
 # run the test
-if __name__ == "__main__":
-    test_no_memory_leak()
-    print("Test passed!")
+# if __name__ == "__main__":
+#     test_no_memory_leak()
+#     print("Test passed!")
 
 if __name__ == "__main__":
     import time

@@ -1,15 +1,16 @@
 import chess.pgn # type: ignore
 import chess # type: ignore
-import os
+# import os
 import io
 import json
 import torch
 from preprocessing.position_parsing import encode_board
 from pytorchchess import TorchBoard
 from pytorchchess.utils import int_to_squares
-from pytorchchess.utils.constants import LONG_RANGE_MOVES
+# from pytorchchess.utils.constants import LONG_RANGE_MOVES
 from tqdm import tqdm
-from typing import List, Tuple, Dict
+from typing import List, Tuple #, Dict
+from IPython.display import SVG, display
 
 
 # ------------------------------------------------------------------
@@ -176,19 +177,21 @@ class ParallelGameProcessor:
         batch_indices = list(range(len(active_boards)))
         tb = self.torch_boards[idx]
         
-        # Check legal moves
-        moves = tb.get_legal_moves(get_tensor=True)
+        # Check legal moves + fused feature tensors
+        moves, feature_tensors = tb.get_legal_moves_fused(return_features=True)
         moves_correct = self.compare_moves_parallel_v2(active_boards, moves, batch_indices, original_indices)
-        
-        # Check feature tensors
-        feature_tensors = tb.feature_tensor()
         features_correct = compare_features_parallel_v2(active_boards, feature_tensors, batch_indices, original_indices)
         
         # Combine results
         all_correct = all(moves_correct) and all(features_correct)
         
         if not all_correct:
+            print("="*40)
             print(f"Errors found at move {self.current_move_idx}")
+            if not all(moves_correct):
+                print("Errors found in legal moves")
+            if not all(features_correct):
+                print("Errors found in feature tensors")
         
         return all_correct
     
@@ -281,7 +284,7 @@ class ParallelGameProcessor:
                 tb.cache.check_info = tb.compute_check_info()
                 print(tb)
                 print(tb.state)
-                lm = tb.get_legal_moves()
+                lm = tb.get_legal_moves_fused()
                 print(lm.moves_to_standard_format())
                 tb.render()
                 results.append(False)
@@ -310,6 +313,10 @@ def compare_features_parallel_v2(boards: List[chess.Board], feature_tensors: tor
                 layer_check = actual_features[:, :, layer] == expected_features[:, :, layer]
                 if not layer_check.all():
                     print(f"  Layer {layer} differs")
+                    print(f"{actual_features[:,:,layer]}, {expected_features[:, :, layer]}")
+                    orientation = chess.WHITE
+                    svg = chess.svg.board(board, orientation=orientation, size=400)
+                    display(SVG(svg))
             results.append(False)
         else:
             results.append(True)
@@ -345,6 +352,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     pgn_file = "data/shards300_small/shard_0.pgn"
+    pgn_file = "data/shards300_small/shard_1.pgn"
+    pgn_file = "data/shards300_small/shard_2.pgn"
+    pgn_file = "data/shards300_small/shard_3.pgn"
+    pgn_file = "data/shards300_small/shard_4.pgn"
     total_games = args.games
     device = torch.device(args.device)
     B = args.batch_size  # Games processed in parallel
@@ -359,8 +370,8 @@ if __name__ == "__main__":
     with tqdm(total=total_games, desc="Processing games") as pbar:
         for start_idx in range(0, total_games, B):
             batch_size = min(B, total_games - start_idx)
-            # if start_idx < 550 or start_idx >= 600:
-            #     continue
+            # if start_idx < 750 or start_idx >= 755:
+            #      continue
             
             # Load batch of games
             games_batch = load_games_batch(pgn_file, start_idx, batch_size)
