@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 from pytorchchess import TorchBoard
 from .beam_search import BeamSearchState
