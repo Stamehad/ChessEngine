@@ -8,7 +8,7 @@ from model.engine_pl import ChessLightningModule
 from pytorchchess import TorchBoard
 from pytorchchess.beam_search.search_engine import BeamSearchEngine
 import pytorchchess.utils.constants as const
-from tqdm import tqdm
+# from tqdm import tqdm
 
 if __name__ == "__main__":
     import argparse

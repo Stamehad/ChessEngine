@@ -1,9 +1,10 @@
 import torch
 from tqdm import tqdm
-from pytorchchess import TorchBoard
+# from pytorchchess import TorchBoard
 from .beam_search import BeamSearchState
 from .position_queue import PositionQueue
 from ..utils.profiler import profiler, auto_profile_class
+# from typing import List
 
 def move_to_notation(moves):
     """
@@ -49,13 +50,13 @@ class BeamSearchEngine:
     def __init__(
             self, 
             model, 
-            expansion_factors, 
-            device=torch.device("cpu"), 
-            pv_depth=3, 
-            verbose=False, 
-            debug=False,
-            profile=False,
-            seed=None
+            expansion_factors: torch.Tensor, 
+            device: torch.device = torch.device("cpu"), 
+            pv_depth: int = 3, 
+            verbose: bool = False, 
+            debug: bool = False,
+            profile: bool = False,
+            seed: int = None
         ):
         """
         Args:

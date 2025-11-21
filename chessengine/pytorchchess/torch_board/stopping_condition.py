@@ -176,7 +176,7 @@ class StoppingCondition:
         Count pieces for each side (excluding kings and pawns).
         Returns dictionaries with piece counts for white and black.
         """
-        B = self.board_tensor.shape[0]
+        # B = self.board_tensor.shape[0]
         device = self.device
         
         # Assuming board encoding where:

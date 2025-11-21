@@ -17,7 +17,97 @@ def masked_min(tensor, mask, dim):
 #=================================================================
 @dataclass
 class BeamSearchState:
-    """Unified beam search state managing positions, evaluations, and moves"""
+    """Unified beam search state managing positions, evaluations, and moves
+    
+    Example:
+    If exp_f = [4,3,2] then for a single board we have the expansion
+    Layer | boards
+      0   |   1  
+      1   |   4  
+      2   |   12 
+      3   |   24
+
+    i.e. choose top 4 moves for the original board, then top 3 for each of 4 and top 2 for each of 12. 
+    The depth D = 3 (length of exp_f or plys played) and the number of layers is L = D + 1 = 4. 
+
+    Backpropagation:
+    If it's white to play on the original boards, then it's black in layer 1 and white again in layer 2. 
+    - For each of the 12 boards in layer 2 white chooses the best two moves. 
+    - We then get an evaluation from the model for each of the resulting 24 boards. 
+    - For each of 12 boards choose the move (out of two) that led to the max evaluation. 
+    This becoemse the evalution of of the 12 boards. 
+    - We get 3 evaluations for each of the 4 boards in layer 1. 
+    Choose the move the led to the min evaluation (black's turn!). 
+    - In layer 0 choose move that leads to max evaluation out of 4.
+
+    The resulting 3 moves are the principal value (PV) of the search. Once the beam search is concluded,
+    and PV moves are obtained, we push one (or more) of the moves and start a search from the new position we get.
+
+    Layer Interleaving:
+    To achieve constant batch size we time the expansion one step apart
+    Steps | boards
+      0   |   1
+      1   |   4     1   
+      2   |   12    4     1
+      3   |   24    12    4     1
+      4   |   1     24    12    4
+      5   |   4     1     24    12
+      6   |   12    4     1     24
+
+    (Going from 24 to 1 means we've backpropagated, pushed PV moves and starting a new search from the resulting position)
+    Note the number of boards becomes constant 1 + 4 + 12 + 24 = 41 per step.
+    Duplicating this pattern G times gives us a total of L x G = 4 x G simultaneous games (or beam searches)
+    The batch size is B = 41 x G.  
+
+    Main Complication:
+    The branches of the search may not extend to full length, e.g. not enough legal moves or checkmate/stalemate has been reached. 
+    The search must record evaluations for such early terminated branches, and the back-prop must take them into account correctly.  
+
+    Evaluation tensor:
+    For each of L x G simultaneous beam searches we need to keep 24 (= k0 x ... x kD-1) evals for each leaf of the search.
+    If the branch terminates early the evaluation fills all the descendants, to simplify backprop. 
+
+    Example 2: 
+    G = 2, exp_f = [3,2]
+    we get the tensors:
+
+    ----------------------------------------------------------------------------------
+    Step 0:
+    BeamSearchState (B=2):
+        Idx:   tensor([0, 0])
+        Game:  tensor([0, 1])
+        Layer: tensor([0, 0])
+        Depth: tensor([0, 0])
+    ----------------------------------------------------------------------------------
+    Step 1:
+    BeamSearchState (B=8):
+        Idx:   tensor([0, 2, 4, 0, 2, 4, 0, 0])
+        Game:  tensor([0, 0, 0, 1, 1, 1, 0, 1])
+        Layer: tensor([0, 0, 0, 0, 0, 0, 1, 1])
+        Depth: tensor([1, 1, 1, 1, 1, 1, 0, 0])
+    ----------------------------------------------------------------------------------
+    Step 2:
+    BeamSearchState (B=20):
+        Idx:   tensor([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 2, 4, 0, 2, 4, 0, 0])
+        Game:  tensor([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1])
+        Layer: tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2])
+        Depth: tensor([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0])
+    ----------------------------------------------------------------------------------
+    Step 3:
+    BeamSearchState (B=20):
+        Idx:   tensor([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 2, 4, 0, 2, 4, 0, 0])
+        Game:  tensor([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1])
+        Layer: tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3])
+        Depth: tensor([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0])
+    ----------------------------------------------------------------------------------
+    Step 4:
+    BeamSearchState (B=20):
+        Idx:   tensor([0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5, 0, 2, 4, 0, 2, 4, 0, 0])
+        Game:  tensor([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1])
+        Layer: tensor([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 0, 0])
+        Depth: tensor([2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 0, 0])
+    ----------------------------------------------------------------------------------
+    """
     
     # Core state tensors
     idx: torch.Tensor        # (B,) flat index into evaluation tensor
@@ -32,8 +122,8 @@ class BeamSearchState:
     L: int                   # Number of layers (D + 1), where D = len(exp_f)
     
     # Data storage tensors
-    evaluations: torch.Tensor # (L, G * n0 * n1 * ... * nD-1) evaluations at each position
-    moves: torch.Tensor       # (L, D, G * n0 * n1 * ... * nD-1) moves at each position
+    evaluations: torch.Tensor # (L, G * k0 * k1 * ... * kD-1) evaluations at each position
+    moves: torch.Tensor       # (L, D, G * k0 * k1 * ... * kD-1) moves at each position
     
     # Constants
     MOVE_PAD: int = -1
@@ -42,7 +132,7 @@ class BeamSearchState:
     
     @property
     def exp_dim(self):
-        """Dimension strides for flat indexing: [n0*n1*...*nD-1, n1*...*nD-1, ..., nD-1, 1]"""
+        """Dimension strides for flat indexing: [k0*k1*...*kD-1, k1*...*kD-1, ..., kD-1, 1]"""
         return torch.cat([
             torch.cumprod(self.exp_f.flip(0), dim=0).flip(0),
             torch.tensor([1], device=self.exp_f.device)
@@ -58,7 +148,7 @@ class BeamSearchState:
         return self.idx.size(0)
     
     @classmethod
-    def initialize(cls, G, expansion_factors, debug, device="cpu"):
+    def initialize(cls, G, expansion_factors, debug: bool = False, device="cpu"):
         """Initialize a new BeamSearchState with given parameters"""
         exp_f = expansion_factors.clone().to(device=device, dtype=torch.long)
         D = len(exp_f)  
@@ -229,7 +319,7 @@ class BeamSearchState:
     def backpropagate(self, layer, side):
         """Backpropagate evaluations and return principal variation with target layer"""
         # Get evaluations for this stack
-        evals = self.evaluations[layer].view(self.G, *self.exp_f) # (G, n0, n1, ..., nD-1)
+        evals = self.evaluations[layer].view(self.G, *self.exp_f) # (G, k0, k1, ..., kD-1)
         mask = evals == self.EVAL_PAD # Mask for invalid evals
         finished = (evals == 1).all() or (evals == -1).all()  # Check if all positions are terminal       
         if mask.all() or finished:
@@ -244,7 +334,7 @@ class BeamSearchState:
         
         self.evaluations[layer] = self.EVAL_PAD  # Clear evaluations for this layer
         
-        return pv_values, pv_moves, layer
+        return pv_values, pv_moves, layer   # (G,), (G,D), 
     
     #==========================================================================
     # Utility methods
@@ -269,7 +359,7 @@ class BeamSearchState:
         Perform minimax backpropagation on game evaluations.
         
         Args:
-            game_evals: (G, n0, n1, ..., nD-1) evaluation tensor
+            game_evals: (G, k0, k1, ..., kD-1) evaluation tensor
             side: bool or (G,) tensor indicating starting side for each game
             
         Returns:
@@ -288,17 +378,17 @@ class BeamSearchState:
         current_side = side.view(G, *([1] * dims_to_add))
         
         best_idx = []
-        for k in range(D):
+        for d in range(D):
             # Compute both max and min for all positions
-            max_vals, max_idx = masked_max(evals, mask, dim=-1)  # (G, n0, ..., nD-k-2)
-            min_vals, min_idx = masked_min(evals, mask, dim=-1)  # (G, n0, ..., nD-k-2)
+            max_vals, max_idx = masked_max(evals, mask, dim=-1)  # (G, k0, ..., kD-d-2)
+            min_vals, min_idx = masked_min(evals, mask, dim=-1)  # (G, k0, ..., kD-d-2)
             
             # Select values and indices based on current_side for each game
             evals = torch.where(current_side, max_vals, min_vals)
             idx = torch.where(current_side, max_idx, min_idx)
             
             best_idx.append(idx)
-            mask = mask.all(dim=-1) # (G, n0, ..., nD-k-2)
+            mask = mask.all(dim=-1) # (G, k0, ..., kD-d-2)
             
             # Flip sides and remove the last dimension for next iteration
             current_side = ~current_side.squeeze(-1)  # Remove one dimension and flip
@@ -315,8 +405,8 @@ class BeamSearchState:
         
         Args:
             best_idx: list of tensors, length D.
-              - best_idx[0]: (G, n0, ..., nD-2)
-              - best_idx[1]: (G, n0, ..., nD-3)
+              - best_idx[0]: (G, k0, ..., kD-2)
+              - best_idx[1]: (G, k0, ..., kD-3)
               - ...
               - best_idx[-1]: (G,)
               
@@ -328,7 +418,7 @@ class BeamSearchState:
         # print(f"best_idx: {[b.shape for b in best_idx]}")  # Debugging output
         # print(best_idx)
         for d in range(D): 
-            idx_d = best_idx[-d-1] # (G, n0, ..., nd-1)
+            idx_d = best_idx[-d-1] # (G, k0, ..., kd-1)
             previous = pv_idx[:, :d]  # (G, d)
             new = self._batched_index(idx_d, previous)
             pv_idx[:, d] = new.view(self.G)
@@ -343,13 +433,13 @@ class BeamSearchState:
         Batched indexing helper function.
         
         Args:
-            t: tensor of shape [G, n0, ..., nD]
+            t: tensor of shape [G, k0, ..., kD]
             idx: tensor of shape [G, D] containing indices
             
         Returns:
             Indexed values from t using idx
         """
-        # t: shape [g, n0, ..., nD]
+        # t: shape [g, k0, ..., kD]
         # idx: shape [g, D]
         g, D = idx.shape
         g_idx = torch.arange(g, device=idx.device)
@@ -366,8 +456,8 @@ class BeamSearchState:
         Returns:
             pv_moves: (G, D) moves along the principal variation
         """
-        finished_moves = self.moves[layer]  # (D, G * n0 * ... * nD-1)
-        finished_moves = finished_moves.view(self.D, self.G, -1)  # (D, G, n0 * ... * nD-1)
+        finished_moves = self.moves[layer]  # (D, G * k0 * ... * kD-1)
+        finished_moves = finished_moves.view(self.D, self.G, -1)  # (D, G, k0 * ... * kD-1)
         
         g_idx = torch.arange(self.G, device=pv_indices.device)  # (G,)
         pv_moves = finished_moves[:, g_idx, pv_indices]  # (D, G)

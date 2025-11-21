@@ -4,7 +4,7 @@ from pytorchchess import TorchBoard
 
 class PositionQueue:
     """
-    Manages G * (L+1) chess positions organized into L+1 layers of G positions each.
+    Manages G * (D+1) chess positions organized into D+1 layers of G positions each.
     Supports cycling through layers and applying moves to specific layers.
     """
     
@@ -15,7 +15,7 @@ class PositionQueue:
             num_games: Number of games G
             device: Device for computations
         """
-        self.layers = layers_dict  # {0: TorchBoard, 1: TorchBoard, ..., L: TorchBoard}
+        self.layers = layers_dict  # {0: TorchBoard, 1: TorchBoard, ..., D: TorchBoard}
         self.num_games = num_games
         self.device = device
         self.num_layers = len(layers_dict)
@@ -23,10 +23,10 @@ class PositionQueue:
     @classmethod
     def from_board_list(cls, boards, num_games, device):
         """
-        Create PositionQueue from list of G * (L+1) chess boards.
+        Create PositionQueue from list of G * (D+1) chess boards.
         
         Args:
-            boards: TorchBoard or List of Chess.Board objects (length G * (L+1))
+            boards: TorchBoard or List of Chess.Board objects (length G * (D+1))
             num_games: Number of games G
             device: Device for computations
         """
@@ -84,7 +84,7 @@ class PositionQueue:
         Get positions at specific layer.
         
         Args:
-            layer_idx: Layer index (0 to L)
+            layer_idx: Layer index (0 to D)
             clone: If True, return cloned positions; if False, return view
         """
         if clone:
