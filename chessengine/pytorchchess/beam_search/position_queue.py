@@ -8,14 +8,16 @@ class PositionQueue:
     Supports cycling through layers and applying moves to specific layers.
     """
     
-    def __init__(self, layers_dict, num_games, device):
+    def __init__(self, layers_dict, finished_dict, all_finished_dict, num_games, device):
         """
         Args:
             layers_dict: {layer_idx: TorchBoard} - each TorchBoard has G positions
             num_games: Number of games G
             device: Device for computations
         """
-        self.layers = layers_dict  # {0: TorchBoard, 1: TorchBoard, ..., D: TorchBoard}
+        self.layers = layers_dict       # {0: TorchBoard, 1: TorchBoard, ..., D: TorchBoard}
+        self.finished = finished_dict   # {0: finished_mask, 1: finished_mask, ..., D: finished_mask}
+        self.all_finished = all_finished_dict  # {0: all_finished_bool, ..., D: all_finished_bool}
         self.num_games = num_games
         self.device = device
         self.num_layers = len(layers_dict)
@@ -44,12 +46,16 @@ class PositionQueue:
         num_layers = total_positions // num_games
         
         layers_dict = {}
+        finished_dict = {}
+        all_finished_dict = {}
         for layer in range(num_layers):
             start_idx = layer * num_games
             end_idx = start_idx + num_games
             layers_dict[layer] = boards[start_idx:end_idx]
+            finished_dict[layer] = torch.zeros(num_games, dtype=torch.bool, device=device)
+            all_finished_dict[layer] = False
             
-        return cls(layers_dict, num_games, device)
+        return cls(layers_dict, finished_dict, all_finished_dict, num_games, device)
     
     def __getitem__(self, layer_idx):
         """Get TorchBoard for specific layer (returns view, not clone)"""
@@ -80,17 +86,38 @@ class PositionQueue:
             layer = (layer + 1) % self.num_layers
     
     def get_layer(self, layer_idx, clone=False):
+        """Return the TorchBoard for a specific layer."""
+        board = self.layers[layer_idx]
+        return board.clone() if clone else board
+
+    def get_active_layer(self, layer_idx, clone=False):
+        """Return unfinished positions and the finished mask for a layer."""
+        board = self.layers[layer_idx]
+        mask = self.finished[layer_idx]
+        if clone:
+            board = board.clone()
+            mask = mask.clone()
+        return board[~mask], mask
+
+    def update_finished(self, layers, games):
         """
-        Get positions at specific layer.
+        Mark specific games as finished at given layer.
         
         Args:
-            layer_idx: Layer index (0 to D)
-            clone: If True, return cloned positions; if False, return view
+            layers: (N,) tensor of layer indices (must be the same)
+            games: (N,) tensor of game indices to mark as finished
         """
-        if clone:
-            return self.layers[layer_idx].clone()
-        else:
-            return self.layers[layer_idx]
+        if games.numel() == 0:
+            return
+
+        lay = layers.unique()
+        assert lay.numel() == 1, "All layer indices must be the same"
+        lay = int(lay.item())
+        finished_mask = self.finished[lay]
+        finished_mask[games] = True
+        self.finished[lay] = finished_mask
+
+        self.all_finished[lay] = finished_mask.all().item()
     
     def apply_moves_to_layer(self, layer_idx, moves_sequence):
         """
@@ -139,12 +166,14 @@ class PositionQueue:
         """
         Check if all root positions in all layers are game over.
         """
-        for layer_idx in range(self.num_layers):
-            positions = self.layers[layer_idx]
-            terminal, _ = positions.is_game_over()
-            if not terminal.all():
-                return False
-        return True
+        all_finished = all(self.all_finished[layer] for layer in range(self.num_layers))
+        return all_finished
+        # for layer_idx in range(self.num_layers):
+        #     positions = self.layers[layer_idx]
+        #     terminal, _ = positions.is_game_over()
+        #     if not terminal.all():
+        #         return False
+        # return True
     
     def __repr__(self):
         layer_sizes = [self.layers[i].board_tensor.shape[0] for i in range(self.num_layers)]

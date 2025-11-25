@@ -153,6 +153,7 @@ class BeamSearchState:
         exp_f = expansion_factors.clone().to(device=device, dtype=torch.long)
         D = len(exp_f)  
         L = D + 1  
+        print(f"Initializing BeamSearchState: G={G}, D={D}, exp_f={exp_f.tolist()}")
 
         return cls(
             idx=torch.zeros(0, dtype=torch.long, device=device),
@@ -199,11 +200,17 @@ class BeamSearchState:
     #==========================================================================
     # Position management
     #==========================================================================
-    def add_new_layer(self, layer):
+    def add_new_layer(self, layer, finished_mask):
+        # finished_mask: (G,) boolean mask for finished games at this layer
         new_idx = torch.zeros(self.G, dtype=torch.long, device=self.idx.device)
         new_game = torch.arange(self.G, dtype=torch.long, device=self.idx.device)
         new_layer = torch.full((self.G,), layer, dtype=torch.long, device=self.idx.device)
         new_depth = torch.full((self.G,), 0, dtype=torch.long, device=self.idx.device)
+
+        new_idx = new_idx[~finished_mask]
+        new_game = new_game[~finished_mask]
+        new_layer = new_layer[~finished_mask]
+        new_depth = new_depth[~finished_mask]
 
         self.idx = torch.cat([self.idx, new_idx])
         self.game = torch.cat([self.game, new_game])
@@ -323,6 +330,8 @@ class BeamSearchState:
         mask = evals == self.EVAL_PAD # Mask for invalid evals
         finished = (evals == 1).all() or (evals == -1).all()  # Check if all positions are terminal       
         if mask.all() or finished:
+            print(f"Backpropagate: layer {layer}, mask = {mask.view(-1)}, finished = {finished}")
+            print(f"Evals: {evals.view(-1)}")
             return None, None, None
 
         pv_values, pv_indices = self._minimax_backprop(evals, mask, side)
