@@ -6,6 +6,7 @@ import torch
 
 from chessengine.model.engine_pl import ChessLightningModule
 from chessengine.pytorchchess.beam_search.self_play import SelfPlayEngine
+from chessengine.pytorchchess.utils import constants_new as const
 from chessengine.rl.initial_state_sampler import InitialStateSampler
 from pytorchchess import TorchBoard
 from rl.data_module import SelfPlayDataModule
@@ -27,13 +28,13 @@ def apply_debug_settings(config):
     rl_cfg["games"] = 1
     rl_cfg["expansion_factors"] = [3,2,1]
     rl_cfg["max_steps"] = 450
-    rl_cfg["cycles"] = 2
-    rl_cfg["device"] = "cpu" #"mps" if torch.backends.mps.is_available() else "cpu"
+    rl_cfg["cycles"] = 1
+    rl_cfg["device"] = "mps" if torch.backends.mps.is_available() else "cpu"
     config["rl"] = rl_cfg
 
     train_cfg = config.get("train", {})
     train_cfg["max_epochs"] = 1
-    train_cfg["device"] = "cpu"
+    train_cfg["device"] = "mps"
     train_cfg["precision"] = 32
     config["train"] = train_cfg
     return config
@@ -68,6 +69,7 @@ def main():
 
     rl_cfg = config.get("rl", {})
     device = torch.device(rl_cfg.get("device", "cpu"))
+    const.move_constants_to(device)
     num_cycles = rl_cfg.get("cycles", 1)
     epochs_per_cycle = rl_cfg.get("epochs_per_cycle", 1)
 

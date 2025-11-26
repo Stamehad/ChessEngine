@@ -160,10 +160,16 @@ l1 = torch.arange(64).view(1,-1)
 
 MOVE_ENCODING[l0,l1] = (l0 + 64 * l1).to(torch.int16) # (64,64)
 
+_CURRENT_DEVICE = torch.device("cpu")
+
 
 # Function to move all constants to a specified device
 def move_constants_to(device):
     global MOVES, MOVES2, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES, KING_TO, MOVE_ENCODING
+    global _CURRENT_DEVICE
+
+    if device == _CURRENT_DEVICE:
+        return
 
     MOVES = MOVES.to(device)
     MOVES2 = MOVES2.to(device)
@@ -172,3 +178,4 @@ def move_constants_to(device):
     CASTLING_ATTACK_ZONES = CASTLING_ATTACK_ZONES.to(device)
     KING_TO = KING_TO.to(device)
     MOVE_ENCODING = MOVE_ENCODING.to(device)
+    _CURRENT_DEVICE = device

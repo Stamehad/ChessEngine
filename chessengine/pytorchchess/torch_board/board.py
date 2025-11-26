@@ -12,6 +12,8 @@ from .pseudo_move_gen import PseudoMoveGenerator
 from .pseudo_move_gen_new import PseudoMoveGeneratorNew
 from .in_check import InCheck
 from pytorchchess.utils import state_from_board, encode
+import pytorchchess.utils.constants as const_legacy
+import pytorchchess.utils.constants_new as const_new
 from pytorchchess.state import GameState, LegalMoves
 from .to_chess_board import ToChessBoard
 from .push_moves import PushMoves
@@ -50,6 +52,8 @@ class TorchBoard(
         assert board_tensor.shape[-2:] == (8, 8), "boards must be shape (B, 8, 8)"
 
         self.device = device
+        const_legacy.move_constants_to(self.device)
+        const_new.move_constants_to(self.device)
 
         if board_tensor.dim() == 2:
             board_tensor = board_tensor.unsqueeze(0)  # (1, 8, 8)

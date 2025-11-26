@@ -126,10 +126,16 @@ CASTLING_ATTACK_ZONES = torch.cat([
     torch.tensor([0, 0, 1, 1, 1, 1, 1, 0], dtype=torch.uint8)
 ], dim=0).to(dtype=torch.uint8) # (64,)
 
+_CURRENT_DEVICE = torch.device("cpu")
+
 # Function to move all constants to a specified device
 def move_constants_to(device):
     global KNIGHT_MOVES, KING_MOVES, PAWN_CAP_W, PAWN_CAP_B, PAWN_PUSH_W, PAWN_PUSH_B, QUEEN_MOVES
     global SHORT_RANGE_MOVES, LONG_RANGE_MOVES, PROMOTION_MASK, CASTLING_ZONES, CASTLING_ATTACK_ZONES
+    global _CURRENT_DEVICE
+
+    if device == _CURRENT_DEVICE:
+        return
 
     KNIGHT_MOVES = KNIGHT_MOVES.to(device)
     KING_MOVES = KING_MOVES.to(device)
@@ -144,3 +150,5 @@ def move_constants_to(device):
     PROMOTION_MASK = PROMOTION_MASK.to(device)
     CASTLING_ZONES = CASTLING_ZONES.to(device)
     CASTLING_ATTACK_ZONES = CASTLING_ATTACK_ZONES.to(device)
+
+    _CURRENT_DEVICE = device
