@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from pytorchchess import TorchBoard
+from pytorchchess.state import LegalMoves
 from .beam_search import BeamSearchState
 from .position_queue import PositionQueue
 
@@ -234,7 +235,7 @@ class SelfPlayEngine:
         self._backpropagate_finished_trees()
 
         if len(self.beam_state) > 0:
-            self._expand_remaining_positions(move_pred)
+            self._expand_remaining_positions(legal_moves, move_pred)
 
         self.step += 1
 
@@ -331,15 +332,22 @@ class SelfPlayEngine:
         moves_to_apply = pv_moves[:, : self.pv_depth]
         self.position_queue.apply_moves_to_layer(finished_layer, moves_to_apply)
 
-    def _expand_remaining_positions(self, move_pred: torch.Tensor):
+    def _expand_remaining_positions(self, legal_moves: LegalMoves ,move_pred: torch.Tensor):
         """Sample top-k legal moves and push them to create the next frontier."""
-        move_data = self.beam_boards.get_topk_legal_moves(
-            move_pred,
-            ks=self.expansion_factors[self.beam_state.depth],
-            sample=True,
-            temp=3.0,
-            generator=self.generator,
+        move_data = legal_moves.rank_moves(
+            move_pred, 
+            ks=self.expansion_factors[self.beam_state.depth], 
+            sample=False, 
+            temp=3.0, 
+            generator=self.generator
         )
+        # move_data = self.beam_boards.get_topk_legal_moves(
+        #     move_pred,
+        #     ks=self.expansion_factors[self.beam_state.depth],
+        #     sample=True,
+        #     temp=3.0,
+        #     generator=self.generator,
+        # )
         new_moves, board_idx, move_indices, ks = move_data
 
         self.beam_state = self.beam_state.expand(move_indices, ks)

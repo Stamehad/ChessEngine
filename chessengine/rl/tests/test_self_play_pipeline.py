@@ -32,7 +32,7 @@ def main(
     print(f"Sampled {len(boards)} initial positions from dataset")
 
     tb = TorchBoard.from_board_list(boards, device=device)
-    model = load_real_model(device) if use_real_model else DummyModel()
+    model = load_real_model(device) if use_real_model else DummyModel().to(device)
     engine = SelfPlayEngine(model, expansion_factors, device=device)
     engine.initialize(tb)
 

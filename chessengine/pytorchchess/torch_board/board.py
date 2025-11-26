@@ -193,10 +193,10 @@ class TorchBoard(
 
     def get_legal_moves_fused(self, return_features: bool = False):
         """Return legal moves (and optional feature tensor) via the fused kernel."""
-        legal_moves, feature_tensor = self.get_moves_fused()
-        if return_features:
-            return legal_moves, feature_tensor
-        return legal_moves
+        # legal_moves, feature_tensor = self.get_moves_fused()
+        # if return_features:
+        #     return legal_moves, feature_tensor
+        return self.get_moves_fused()
     
     def get_topk_legal_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
         lm = self.get_legal_moves(get_tensor=True)  # LegalMoves

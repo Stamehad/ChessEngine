@@ -340,6 +340,7 @@ class LegalMoves:
         return selected_moves, b_idx, m_idx, ks
     
     def rank_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
+        self.generate_one_hot_()
         move_logits = self.get_logits(move_pred)
         if sample:
             return self.sample_k(move_logits, ks, temp, generator)
@@ -367,3 +368,10 @@ class LegalMoves:
 
         all_valid = (is_valid | is_padding).all(dim=0)  # Check if all moves are valid or padding
         return all_valid
+    
+    def generate_one_hot_(self):
+        """Returns the one-hot representation of the legal moves."""
+        assert self.tensor is not None, "Tensor representation must be generated before one-hot"
+        if self.one_hot is not None:
+            return
+        self.one_hot = masked_one_hot(self.tensor.long(), num_classes=7, mask_value=-100).to(torch.int8)  # (B, 64, L_max, 7)
