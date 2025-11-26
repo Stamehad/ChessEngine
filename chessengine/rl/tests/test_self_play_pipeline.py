@@ -6,39 +6,49 @@ from dotenv import load_dotenv
 from chessengine.rl.initial_state_sampler import InitialStateSampler
 from chessengine.pytorchchess.beam_search.self_play import SelfPlayEngine
 from pytorchchess import TorchBoard
+from torch.profiler import profile, ProfilerActivity
 
 
-def main(use_real_model: bool = False):
-    config = {
-        "prefetch": 2,
-        "n_games": 2,
-        "positions_per_game": 1,
-        "max_ply": 30,
-        "database_dir": "data/shards300_small/",
-    }
-
-    sampler = InitialStateSampler(config)
-    expansion_factors = torch.tensor([3, 2, 1], dtype=torch.long)
+def main(
+    device: torch.device,
+    expansion_factors,
+    games: int,
+    sampler_cfg,
+    use_real_model: bool = False,
+    max_steps: int = 100,
+    profile_steps: int = 50,
+):
+    sampler = InitialStateSampler(sampler_cfg)
     D = expansion_factors.numel()
-    G = 1  # keep the test lightweight
-    required_boards = G * (D + 1)
+    required_boards = games * (D + 1)
 
     boards = sampler.get_boards()
-    if len(boards) < required_boards:
-        extra = sampler.sample_initial_positions(n1=required_boards, n2=0, include_start=False)
-        boards.extend(extra)
+    while len(boards) < required_boards:
+        boards.extend(
+            sampler.sample_initial_positions(n1=required_boards, include_start=False)
+        )
+    boards = boards[:required_boards]
 
     print(f"Sampled {len(boards)} initial positions from dataset")
 
-    device = torch.device("cpu")
-    tb = TorchBoard.from_board_list(boards[:required_boards], device=device)
+    tb = TorchBoard.from_board_list(boards, device=device)
     model = load_real_model(device) if use_real_model else DummyModel()
     engine = SelfPlayEngine(model, expansion_factors, device=device)
     engine.initialize(tb)
 
-    engine.run(max_iterations=1000)
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        record_shapes=True,
+        with_flops=False,
+        profile_memory=True,
+    ) as prof:
+        for step in range(max_steps):
+            engine.step_once()
+            if step < profile_steps:
+                prof.step()
 
-    return engine.sample_buffer.batch
+    print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+    return engine.sample_buffer.batch, prof
 
 
 class DummyModel(torch.nn.Module):
@@ -90,5 +100,21 @@ def load_real_model(device: torch.device):
 
 
 if __name__ == "__main__":
-    batch = main(use_real_model=True)
+    expansion = torch.tensor([3, 2, 1], dtype=torch.long)
+    sampler_cfg = {
+        "prefetch": 2,
+        "n_games": 64,
+        "positions_per_game": 1,
+        "max_ply": 30,
+        "database_dir": "data/shards300_small/",
+    }
+    batch, prof = main(
+        device=torch.device("cpu"),
+        expansion_factors=expansion,
+        games=1,
+        sampler_cfg=sampler_cfg,
+        use_real_model=False,
+        max_steps=200,
+        profile_steps=50,
+    )
     print("Generated batch with", batch.features.shape[0], "samples")

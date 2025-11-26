@@ -48,7 +48,7 @@ rl:
   device: "cuda"
   sampler:
     prefetch: 4
-    n_games: 16
+    n_games: 64
     positions_per_game: 1
     max_ply: 60
     database_dir: "data/shards300_small/"

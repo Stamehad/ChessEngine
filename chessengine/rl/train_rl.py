@@ -91,17 +91,15 @@ def main():
 
 
 def run_self_play(model, rl_cfg: dict, device: torch.device):
-    sampler = InitialStateSampler(rl_cfg.get("sampler", {}))
     expansion = torch.tensor(rl_cfg.get("expansion_factors", [3, 2, 1]), dtype=torch.long)
     games = rl_cfg.get("games", 1)
     required = games * (expansion.numel() + 1)
-
+    sampler_config = rl_cfg.get("sampler", {})
+    sampler_config["n_games"] = required
+    sampler = InitialStateSampler(rl_cfg.get("sampler", {}))
+    
     boards = sampler.get_boards()
-    while len(boards) < required:
-        boards.extend(
-            sampler.sample_initial_positions(n1=required, n2=0, include_start=False)
-        )
-    boards = boards[:required]
+    assert len(boards) == required, f"Expected {required} boards, got {len(boards)}"
 
     tb = TorchBoard.from_board_list(boards, device=device)
     model.eval()
