@@ -46,6 +46,7 @@ def benchmark(batch_size, cycles, device, use_compile):
         "database_dir": "data/shards300_small/",
     }
     tb = build_boards(batch_size, sampler_cfg, device)
+    print(f"Initial TorchBoard batch size: {tb.batch_size}")
     compiled_ops = compile_wrappers() if use_compile else None
     # warmup
     for _ in range(5):
@@ -72,6 +73,11 @@ if __name__ == "__main__":
     parser.add_argument("--cycles", type=int, default=50)
     parser.add_argument("--compile", action="store_true", help="Use torch.compile wrappers for rank_moves/push")
     args = parser.parse_args()
+
+    print("Running benchmark with settings:")
+    print(f"  Batch size: {args.batch_size}")
+    print(f"  Cycles: {args.cycles}")
+    print(f"  Compile: {args.compile}")
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     times, prof = benchmark(args.batch_size, args.cycles, device, args.compile)

@@ -341,13 +341,6 @@ class SelfPlayEngine:
             temp=3.0, 
             generator=self.generator
         )
-        # move_data = self.beam_boards.get_topk_legal_moves(
-        #     move_pred,
-        #     ks=self.expansion_factors[self.beam_state.depth],
-        #     sample=True,
-        #     temp=3.0,
-        #     generator=self.generator,
-        # )
         new_moves, board_idx, move_indices, ks = move_data
 
         self.beam_state = self.beam_state.expand(move_indices, ks)

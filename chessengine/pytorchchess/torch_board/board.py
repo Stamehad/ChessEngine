@@ -41,7 +41,7 @@ class BoardCache:
 
 class TorchBoard(
         # PseudoMoveGenerator, 
-        PseudoMoveGeneratorNew, 
+        # PseudoMoveGeneratorNew, 
         GetMoves,
         InCheck, 
         ToChessBoard, 
