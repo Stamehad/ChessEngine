@@ -26,6 +26,22 @@ class GetMoves:
     def occ_all(self) -> torch.Tensor:
         return self.occ_white() | self.occ_black()
     
+    def friendly_occ(self) -> torch.Tensor:
+        """Return (B,) bitboards of own pieces."""
+        return torch.where(
+            self.side_to_move == 1,
+            self.occ_white(),
+            self.occ_black()
+        )
+
+    def enemy_occ(self) -> torch.Tensor:
+        """Return (B,) bitboards of opponent pieces."""
+        return torch.where(
+            self.side_to_move == 1,
+            self.occ_black(),
+            self.occ_white()
+        )
+    
     def get_moves(self):
         """
         1.  Take self.board_flat of shape (B,64)           – encoded 0-12
