@@ -1,10 +1,10 @@
 import torch
 import torch.nn.functional as F
-from typing import NamedTuple
+# from typing import NamedTuple
 from dataclasses import dataclass
 from typing import Optional
-from pytorchchess.utils.utils import get_check_blockers, squares_to_int, int_to_squares, move_dtype
-from pytorchchess.utils.constants import PROMOTION_MASK  
+from pytorchchess.utils.utils import squares_to_int, int_to_squares, move_dtype #, get_check_blockers 
+# from pytorchchess.utils.constants import PROMOTION_MASK  
 from .premoves import PreMoves
 from model.utils import masked_one_hot
 

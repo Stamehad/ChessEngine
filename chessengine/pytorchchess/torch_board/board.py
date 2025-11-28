@@ -8,8 +8,9 @@
 # ✔️ PreMove incremental update on push_move(): Avoid recomputing all pseudo-legal moves from scratch.
 # ------------------------------------------------------------------
 import torch
-from .pseudo_move_gen import PseudoMoveGenerator
+# from .pseudo_move_gen import PseudoMoveGenerator
 from .pseudo_move_gen_new import PseudoMoveGeneratorNew
+from .get_moves import GetMoves
 from .in_check import InCheck
 from pytorchchess.utils import state_from_board, encode
 import pytorchchess.utils.constants as const_legacy
@@ -39,8 +40,9 @@ class BoardCache:
         return new_cache
 
 class TorchBoard(
-        PseudoMoveGenerator, 
+        # PseudoMoveGenerator, 
         PseudoMoveGeneratorNew, 
+        GetMoves,
         InCheck, 
         ToChessBoard, 
         PushMoves, 
