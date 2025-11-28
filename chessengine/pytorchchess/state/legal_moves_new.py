@@ -210,7 +210,6 @@ class LegalMovesNew:
         return selected_moves, b_idx, m_idx, ks
     
     def rank_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
-        self.generate_one_hot_()
         move_logits = self.get_logits(move_pred)
         if sample:
             return self.sample_k(move_logits, ks, temp, generator)
