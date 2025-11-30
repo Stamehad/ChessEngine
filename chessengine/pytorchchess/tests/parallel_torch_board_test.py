@@ -177,8 +177,8 @@ class ParallelGameProcessor:
         batch_indices = list(range(len(active_boards)))
         tb = self.torch_boards[idx]
         
-        # Check legal moves + fused feature tensors
-        moves, feature_tensors = tb.get_legal_moves_fused(return_features=True)
+        # Check legal moves + feature tensors
+        moves, feature_tensors = tb.get_moves()
         moves_correct = self.compare_moves_parallel_v2(active_boards, moves, batch_indices, original_indices)
         features_correct = compare_features_parallel_v2(active_boards, feature_tensors, batch_indices, original_indices)
         
@@ -277,16 +277,6 @@ class ParallelGameProcessor:
             
             if missing or extra:
                 print(f"Game {original_idx} b_idx {batch_idx} - missing: {missing}, Extra: {extra}")
-                tb = self.torch_boards[original_idx:original_idx + 1]  # Get TorchBoard for this game
-                from pytorchchess.torch_board.board import BoardCache
-                print(tb.board_tensor.flip(1))  # flip to match python-chess orientation
-                tb.cache = BoardCache()
-                tb.cache.check_info = tb.compute_check_info()
-                print(tb)
-                print(tb.state)
-                lm = tb.get_legal_moves_fused()
-                print(lm.moves_to_standard_format())
-                tb.render()
                 results.append(False)
             else:
                 results.append(True)

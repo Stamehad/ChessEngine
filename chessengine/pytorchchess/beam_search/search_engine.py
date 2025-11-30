@@ -77,6 +77,7 @@ class BeamSearchEngine:
         self.beam_state = None
         self.beam_boards = None
         self.step = 0
+        self._latest_legal_moves = None
         
         # Create cycling iterator for continuous pipeline
         self.layer_cycle = None
@@ -112,15 +113,11 @@ class BeamSearchEngine:
 
         # Profile specific TorchBoard methods individually
         torch_board_methods = [
-            "get_legal_moves",
-            #"short_range_moves",
-            #"long_range_moves",
-            #"attack_map",
+            "get_moves",
             "feature_tensor",
             "push",
             "select",
             "concat",
-            "get_topk_legal_moves",
             "is_game_over",
         ]
         auto_profile_class(TorchBoard, {
@@ -213,12 +210,17 @@ class BeamSearchEngine:
     # ============= TORCHBOARD OPERATIONS =============
     def _board_get_legal_moves(self):
         """Pure TorchBoard legal move computation"""
-        lm = self.beam_boards.get_legal_moves(get_tensor=True)
-        print(f"Legal moves {lm.encoded.shape}") if self.VERBOSE else None
+        lm, _ = self.beam_boards.get_moves()
+        self._latest_legal_moves = lm
+        if self.VERBOSE:
+            print(f"Legal moves {lm.encoded.shape}")
 
     def _board_feature_extraction(self):
         """Pure model feature extraction"""
         return self.beam_boards.feature_tensor().float()
+    
+    def _reset_cached_moves(self):
+        self._latest_legal_moves = None
     
     def _board_is_game_over(self):
         return self.beam_boards.is_game_over(
@@ -231,20 +233,27 @@ class BeamSearchEngine:
     def _board_push_moves(self, move_data):
         """Pure TorchBoard move application"""
         moves, board_idx, _, _ = move_data
-        return self.beam_boards.push(moves, board_idx)
+        self.beam_boards = self.beam_boards.push(moves, board_idx)
+        self._reset_cached_moves()
+        return self.beam_boards
     
     def _board_select_positions(self, mask):
         """Pure TorchBoard position selection"""
-        return self.beam_boards.select(mask)
+        self.beam_boards = self.beam_boards.select(mask)
+        self._reset_cached_moves()
+        return self.beam_boards
     
     def _board_get_topk(self, evaluations):
         _, move_pred = evaluations
-        move_data = self.beam_boards.get_topk_legal_moves(
-            move_pred, 
+        legal_moves = self._latest_legal_moves
+        if legal_moves is None:
+            legal_moves, _ = self.beam_boards.get_moves()
+        move_data = legal_moves.rank_moves(
+            move_pred,
             ks=self.expansion_factors[self.beam_state.depth],
             sample=True,
             temp=3.0,
-            generator=self.generator
+            generator=self.generator,
         )
         return move_data # (new_moves, board_idx, move_indices, ks)
     
@@ -262,6 +271,7 @@ class BeamSearchEngine:
             self.beam_boards = next_positions
         else:
             self.beam_boards = self.beam_boards.concat(next_positions)
+        self._reset_cached_moves()
     
     # ============= BEAM SEARCH STATE OPERATIONS =============
     def _beam_expand_positions(self, move_data):
@@ -305,7 +315,7 @@ class BeamSearchEngine:
         if dead_positions.any():
             self._beam_store_early_terminated_evaluations(dead_positions, results)
             # Pure board operations
-            self.beam_boards = self.beam_boards.select(~dead_positions)
+            self._board_select_positions(~dead_positions)
             self.beam_state = self.beam_state[~dead_positions]
 
     def _expand_positions_by_component(self, evaluations):
@@ -343,7 +353,7 @@ class BeamSearchEngine:
             self._beam_store_evaluations(finished_expansion, scalar_eval[finished_expansion])
             
             # TorchBoard operations  
-            self.beam_boards = self.beam_boards.select(~finished_expansion)
+            self._board_select_positions(~finished_expansion)
             self.beam_state = self.beam_state[~finished_expansion]
             
             if self.beam_state.idx.shape[0] > 0:

@@ -103,7 +103,7 @@ if __name__ == "__main__":
     expansion = torch.tensor([3, 2, 1], dtype=torch.long)
     sampler_cfg = {
         "prefetch": 2,
-        "n_games": 64,
+        "n_games": 1, # 64,
         "positions_per_game": 1,
         "max_ply": 30,
         "database_dir": "data/shards300_small/",

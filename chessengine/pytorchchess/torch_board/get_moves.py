@@ -414,4 +414,11 @@ class GetMoves:
 
         feature_tensor = x.view(B, 8, 8, 21).contiguous()
 
+        no_moves = ~mask.any(dim=-1)                                     # (B,)
+        if hasattr(self, "cache") and self.cache is not None:
+            self.cache.in_check_mask = in_check.view(-1).clone()
+            self.cache.no_move_mask = no_moves.clone()
+            self.cache.legal_moves = legal_moves.clone()
+            self.cache.features = feature_tensor.clone()
+
         return legal_moves, feature_tensor

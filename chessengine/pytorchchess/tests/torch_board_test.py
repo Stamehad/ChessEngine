@@ -90,7 +90,7 @@ def check_moves_and_features(game, game_idx):
         #-------------------------------------------------------
         # get legal moves
         #-------------------------------------------------------
-        moves = torch_boards.get_legal_moves(get_tensor=True)
+        moves, _ = torch_boards.get_moves()
         #print(f"moves.encoded: {moves.encoded.shape}, moves.mask: {moves.mask.shape}")
         check = compare_moves(board, moves, game_idx, move_idx)
         all_good &= check

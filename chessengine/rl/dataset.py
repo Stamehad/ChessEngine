@@ -10,7 +10,8 @@ class SelfPlayDataset(Dataset):
         features = buffer.features[mask].detach().to(device).float()
         self.features = features.view(-1, 8, 8, 21).to(device)
         self.eval = buffer.values[mask].detach().to(device).long().unsqueeze(-1)
-        self.legal_moves = buffer.lm_tensor[mask].detach().to(device).long()
+        self.sq_changes = buffer.sq_changes[mask].detach().to(device).long()
+        self.label_changes = buffer.label_changes[mask].detach().to(device).long()
         self.true_index = buffer.move_idx[mask].detach().to(device).long()
 
         n = self.features.size(0)
@@ -29,7 +30,8 @@ class SelfPlayDataset(Dataset):
             "king_square": self.king_square[idx],
             "threat_target": self.threat_target[idx],
             "terminal_flag": self.terminal_flag[idx],
-            "legal_moves": self.legal_moves[idx],
+            "sq_changes": self.sq_changes[idx],
+            "label_changes": self.label_changes[idx],
             "true_index": self.true_index[idx],
         }
         return self.features[idx], labels

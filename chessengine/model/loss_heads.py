@@ -145,3 +145,41 @@ class LegalMoveLoss(nn.Module):
 
         loss = ce_loss.mean()
         return loss, masked_logits
+    
+class LegalMoveLossEfficient(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+
+    def forward(self, move_pred, sq_changes, label_changes, true_index, move_weight=None):
+        """
+        move_pred: (B, 64, 7)
+        sq_changes: (B, L, 4) — square indices changed by each legal move
+        label_changes: (B, L, 4) — piece type labels changed by each legal move
+        true_index: (B,) — index of correct move among the L legal moves
+        move_weight: (B, 1) or (B,) — optional scalar weight for each sample
+        """
+
+        B, L, S = sq_changes.shape
+        b_idx = torch.arange(B, device=move_pred.device).view(-1, 1, 1).expand(-1, L, S)  # (B, L, S)
+
+        sq = sq_changes.clamp_min(0).long()                     # (B, L, 4)
+        lab = label_changes.clamp_min(0).long()                 # (B, L, 4)
+
+        mask = (sq_changes[..., 0] != -1)                       # (B, L)
+        valid = (sq_changes >= 0) & mask.unsqueeze(-1)          # (B, L, 4)
+
+        vals = move_pred[b_idx, sq, lab]                        # (B, L, 4)
+        vals = vals * valid
+
+        counts = valid.sum(dim=-1).clamp(min=1)                 # (B, L)
+        move_logits = vals.sum(dim=-1) / counts                 # (B, L)
+
+        move_logits = move_logits.masked_fill(~mask, float('-inf'))
+        ce_loss = F.cross_entropy(move_logits, true_index, reduction='none', ignore_index=-1)  # (B,)
+
+        if move_weight is not None:
+            move_weight = move_weight.view(-1)  # ensure shape (B,)
+            ce_loss = ce_loss * move_weight
+
+        loss = ce_loss.mean()
+        return loss, move_logits

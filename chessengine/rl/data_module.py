@@ -44,21 +44,32 @@ class SelfPlayDataModule(pl.LightningDataModule):
         xs = torch.stack(xs)
 
         batched_labels = {}
+        max_valid_moves = None
         for k in labels[0]:
             values = [lbl[k] for lbl in labels]
-            if k == "legal_moves":
-                stacked = torch.stack(values)
-                is_pad = stacked == -100
-                all_pad = is_pad.all(dim=(0, 1))
-                nonzero = all_pad.logical_not().nonzero(as_tuple=False)
-                if nonzero.numel() == 0:
-                    trimmed = stacked[:, :, :0]
+
+            if k == "sq_changes":
+                stacked = torch.stack(values)  # (B, L_max, 4)
+                valid_cols = (stacked[..., 0] != -1).any(dim=0)  # (L_max,)
+                if valid_cols.any():
+                    last = valid_cols.nonzero(as_tuple=False).max().item() + 1
+                    stacked = stacked[:, :last]
                 else:
-                    trimmed = stacked[:, :, : nonzero.max().item() + 1]
-                batched_labels[k] = trimmed
-            else:
-                batched_labels[k] = torch.stack(values)
-                if k == "true_index":
-                    batched_labels[k] = batched_labels[k].squeeze(-1)
+                    stacked = stacked[:, :0]
+                max_valid_moves = stacked.size(1)
+                batched_labels[k] = stacked
+                continue
+
+            if k == "label_changes":
+                stacked = torch.stack(values)
+                if max_valid_moves is not None:
+                    stacked = stacked[:, :max_valid_moves]
+                batched_labels[k] = stacked
+                continue
+
+            stacked = torch.stack(values)
+            if k == "true_index":
+                stacked = stacked.squeeze(-1)
+            batched_labels[k] = stacked
 
         return xs, batched_labels

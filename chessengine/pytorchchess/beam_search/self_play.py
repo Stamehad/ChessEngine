@@ -1,12 +1,48 @@
+import time
 import torch
 import torch.nn.functional as F
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from pytorchchess import TorchBoard
-from pytorchchess.state import LegalMoves
+from pytorchchess.state import LegalMovesNew
 from .beam_search import BeamSearchState
 from .position_queue import PositionQueue
+
+
+@dataclass
+class SelfPlayProfiler:
+    """Optional wall-clock profiler for the self-play loop."""
+    enabled: bool = False
+    totals: Dict[str, float] = None
+
+    def __post_init__(self):
+        if self.totals is None:
+            self.totals = {}
+
+    @contextmanager
+    def section(self, name: str):
+        if not self.enabled:
+            yield
+            return
+
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - start
+            self.totals[name] = self.totals.get(name, 0.0) + elapsed
+
+    def summary(self) -> str:
+        if not self.enabled or not self.totals:
+            return "profiling disabled"
+        total = sum(self.totals.values())
+        parts = []
+        for name, value in self.totals.items():
+            pct = (value / total * 100.0) if total > 0 else 0.0
+            parts.append(f"{name}: {value:.3f}s ({pct:.1f}%)")
+        return " | ".join(parts)
 
 
 @dataclass
@@ -15,7 +51,8 @@ class SelfPlayBatch:
     layer_id: torch.Tensor  # (B,)
     game_ids: torch.Tensor  # (B,)
     features: torch.Tensor  # (B, 64, 21)
-    lm_tensor: torch.Tensor # (B, 64, L_max)
+    sq_changes: torch.Tensor  # (B, L_max, 4)
+    label_changes: torch.Tensor  # (B, L_max, 4)
     encoded: torch.Tensor   # (B, L_max)
     move_idx: torch.Tensor  # (B,) long, -1 until assigned
     values: torch.Tensor    # (B,) uint8, 255 until assigned
@@ -26,7 +63,8 @@ class SelfPlayBatch:
             layer_id=torch.cat([self.layer_id, other.layer_id], dim=0),
             game_ids=torch.cat([self.game_ids, other.game_ids], dim=0),
             features=torch.cat([self.features, other.features], dim=0),
-            lm_tensor=torch.cat([self.lm_tensor, other.lm_tensor], dim=0),
+            sq_changes=torch.cat([self.sq_changes, other.sq_changes], dim=0),
+            label_changes=torch.cat([self.label_changes, other.label_changes], dim=0),
             encoded=torch.cat([self.encoded, other.encoded], dim=0),
             move_idx=torch.cat([self.move_idx, other.move_idx], dim=0),
             values=torch.cat([self.values, other.values], dim=0),
@@ -46,22 +84,24 @@ class SelfPlayBuffer:
         self,
         game_ids: torch.Tensor,
         features: torch.Tensor,
-        legal_moves,
+        legal_moves: LegalMovesNew,
         mask: torch.Tensor,
         layer_id: int,
         step_id: int,
     ):
-        lm_tensor = legal_moves.tensor
+        sq_changes = legal_moves.sq_changes
+        label_changes = legal_moves.label_changes
         encoded = legal_moves.encoded
-        if lm_tensor is None:
-            raise ValueError("Legal move tensor is required for training samples.")
+        if sq_changes is None or label_changes is None:
+            raise ValueError("Square and label change tensors are required for training samples.")
 
         selected = mask.nonzero(as_tuple=True)[0]
         if selected.numel() == 0:
             return
 
         feats = features[selected].reshape(selected.numel(), 64, 21).clone().detach()
-        lm = lm_tensor[selected].clone().detach()
+        sq = sq_changes[selected].clone().detach()
+        lab = label_changes[selected].clone().detach()
         enc = encoded[selected].clone().detach()
         games = game_ids[selected].clone().detach()
         layer = torch.full_like(games, layer_id)
@@ -69,7 +109,7 @@ class SelfPlayBuffer:
         move_idx = torch.full((selected.numel(),), -1, dtype=torch.long, device=games.device)
         values = torch.full((selected.numel(),), 255, dtype=torch.uint8, device=games.device)
 
-        new_batch = SelfPlayBatch(steps, layer, games, feats, lm, enc, move_idx, values)
+        new_batch = SelfPlayBatch(steps, layer, games, feats, sq, lab, enc, move_idx, values)
         if self.batch is None:
             self.batch = new_batch
         else:
@@ -148,6 +188,7 @@ class SelfPlayEngine:
         pv_depth: int = 3,
         device: torch.device = torch.device("cpu"),
         generator: Optional[torch.Generator] = None,
+        profiler: Optional[SelfPlayProfiler] = None,
     ):
         self.model = model
         self.device = device
@@ -157,6 +198,7 @@ class SelfPlayEngine:
         self.D = self.expansion_factors.numel()
         self.pv_depth = pv_depth
         self.generator = generator
+        self.profiler = profiler or SelfPlayProfiler(enabled=False)
 
         self.position_queue: Optional[PositionQueue] = None
         self.beam_state: Optional[BeamSearchState] = None
@@ -199,43 +241,47 @@ class SelfPlayEngine:
         # ------------------------------------------------------------------ #
         # Get legal moves and features
         # ------------------------------------------------------------------ #
-        
-        if len(self.beam_state) > 0:
-            legal_moves, features = self.beam_boards.get_legal_moves_fused(return_features=True)
-            features = features.float()
-        
-        # ------------------------------------------------------------------ #
-        # Separate finished positions
-        # ------------------------------------------------------------------ #
-            terminal_mask, terminal_results = self.beam_boards.is_game_over(
-                max_plys=300,
-                enable_fifty_move_rule=True,
-                enable_insufficient_material=True,
-                enable_threefold_repetition=True,
-            )
+        move_pred = None
 
-        # ------------------------------------------------------------------ #
-        # Save root positions for training data
-        # ------------------------------------------------------------------ #
+        with self.profiler.section("board_ops"):
+            if len(self.beam_state) > 0:
+                self.beam_boards.get_moves()
+                terminal_mask, terminal_results = self.beam_boards.is_game_over(
+                    max_plys=300,
+                    enable_fifty_move_rule=True,
+                    enable_insufficient_material=True,
+                    enable_threefold_repetition=True,
+                )
+
+        if len(self.beam_state) > 0:
             root_mask = self.beam_state.depth == 0
-            self.sample_buffer.add_batch(
-                self.beam_state.game,
-                features,
-                legal_moves,
-                mask=root_mask,
-                layer_id=current_layer,
-                step_id=self.step,
-            )
-            self._handle_terminal_positions(terminal_mask, terminal_results)
+            features = self.beam_boards.cache.features
+            legal_moves = self.beam_boards.cache.legal_moves
+            with self.profiler.section("bookkeeping"):
+                self.sample_buffer.add_batch(
+                    self.beam_state.game,
+                    features,
+                    legal_moves,
+                    mask=root_mask,
+                    layer_id=current_layer,
+                    step_id=self.step,
+                )
+                self._handle_terminal_positions(terminal_mask, terminal_results)
 
-            features = features[~terminal_mask]
-            scalar_eval, move_pred = self._evaluate_positions(features)
-            scalar_eval, move_pred = self._handle_finished_expansion(scalar_eval, move_pred)
-        
-        self._backpropagate_finished_trees()
+        with self.profiler.section("model"):
+            if len(self.beam_state) > 0:
+                features = self.beam_boards.cache.features.float()
+                scalar_eval, move_pred = self._evaluate_positions(features)
 
-        if len(self.beam_state) > 0:
-            self._expand_remaining_positions(legal_moves, move_pred)
+        with self.profiler.section("bookkeeping"):
+            if len(self.beam_state) > 0 and move_pred is not None:
+                scalar_eval, move_pred = self._handle_finished_expansion(scalar_eval, move_pred)
+
+            self._backpropagate_finished_trees()
+
+        with self.profiler.section("board_ops"):
+            if len(self.beam_state) > 0 and move_pred is not None:
+                self._expand_remaining_positions(move_pred)
 
         self.step += 1
 
@@ -332,9 +378,9 @@ class SelfPlayEngine:
         moves_to_apply = pv_moves[:, : self.pv_depth]
         self.position_queue.apply_moves_to_layer(finished_layer, moves_to_apply)
 
-    def _expand_remaining_positions(self, legal_moves: LegalMoves ,move_pred: torch.Tensor):
+    def _expand_remaining_positions(self, move_pred: torch.Tensor):
         """Sample top-k legal moves and push them to create the next frontier."""
-        move_data = legal_moves.rank_moves(
+        move_data = self.beam_boards.rank_moves(
             move_pred, 
             ks=self.expansion_factors[self.beam_state.depth], 
             sample=False, 

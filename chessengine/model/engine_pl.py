@@ -4,6 +4,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch
 from chessengine.model.engine import ChessEngine
 from chessengine.model.loss import Loss
+from chessengine.model.loss_rl import Loss as RLLoss    
 from chessengine.model.utils import flatten_dict
 from chessengine.model.metrics import MoveMetrics
 
@@ -12,7 +13,11 @@ class ChessLightningModule(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(flatten_dict(config))
         self.model = ChessEngine(config["model"])
-        self.loss_module = Loss(config)
+        self.rl = config.get("rl", False)
+        if self.rl:
+            self.loss_module = RLLoss(config)
+        else:
+            self.loss_module = Loss(config)
         self.loss_config = config["train"]
         self.lr = self.loss_config["lr"]
         

@@ -10,7 +10,6 @@ class PushMoves:
     def push(self, moves: torch.Tensor, board_idx: torch.Tensor = None):
         # Phase 1: Always expand
         expanded_board = self._expand_for_moves(moves, board_idx)
-        #expanded_board._check_move_validity(moves) # Check if moves are valid
         
         # Phase 2: Apply only valid moves
         PAD_MOVE = -1
@@ -20,13 +19,6 @@ class PushMoves:
         expanded_board.invalidate_cache()  # Invalidate cache after applying moves
     
         return expanded_board
-    
-    def _check_move_validity(self, moves: torch.Tensor):
-        """Check if moves are in legal moves"""
-        lm = self.get_legal_moves() # (LegalMoves)
-        all_valid = lm.check_moves(moves)
-        if not all_valid:
-            raise ValueError("Invalid moves detected in push operation. Moves must be legal.")
 
     
     def _expand_for_moves(self, moves: torch.Tensor, board_idx: torch.Tensor = None):

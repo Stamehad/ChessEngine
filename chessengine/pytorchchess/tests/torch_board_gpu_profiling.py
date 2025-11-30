@@ -59,7 +59,7 @@ if __name__ == "__main__":
     # Warm-up GPU
     print("Starting warm-up...")
     for _ in range(10):
-        _, _, lm = boards.get_legal_moves_new()
+        lm, _ = boards.get_moves()
         is_terminal, result = boards.is_game_over()
         if is_terminal.any():
             boards = boards[~is_terminal]
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         with_stack=True
     ) as prof:
         for i in range(STEPS):
-            _, _, lm = boards.get_legal_moves_new()  # premoves, in_check, legal_moves
+            lm, _ = boards.get_moves()  # legal_moves, features
             is_terminal, result = boards.is_game_over()
             if is_terminal.any():
                 boards = boards[~is_terminal]

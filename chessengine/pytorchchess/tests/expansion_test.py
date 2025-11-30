@@ -79,11 +79,6 @@ if __name__ == "__main__":
         print(beam)
 
         #---------------------------------------
-        # Get legal moves
-        #---------------------------------------
-        tb.get_legal_moves(get_tensor=True)                  # LegalMoves
-        
-        #---------------------------------------
         # filter dead positions (no legal moves)
         #---------------------------------------
         #dead_positions, result = tb.is_game_over() # (B,), (N_over,)

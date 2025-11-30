@@ -8,48 +8,36 @@
 # ✔️ PreMove incremental update on push_move(): Avoid recomputing all pseudo-legal moves from scratch.
 # ------------------------------------------------------------------
 import torch
-# from .pseudo_move_gen import PseudoMoveGenerator
-from .pseudo_move_gen_new import PseudoMoveGeneratorNew
 from .get_moves import GetMoves
-from .in_check import InCheck
 from pytorchchess.utils import state_from_board, encode
 import pytorchchess.utils.constants as const_legacy
 import pytorchchess.utils.constants_new as const_new
-from pytorchchess.state import GameState, LegalMoves
+from pytorchchess.state import GameState
 from .to_chess_board import ToChessBoard
 from .push_moves import PushMoves
-from .feature_tensor import FeatureTensor
 from .stopping_condition import StoppingCondition
 
 class BoardCache:
     def __init__(self):
-        self.check_info = None  # CheckInfo object containing in_check, pin_data, and check_data
-        self.pre_moves = None   # PreMoves object containing pseudo-legal moves
-        self.legal_moves = None # LegalMoves object containing filtered legal moves
-        self.attack_map = None  # Attack map tensor (B, 64) indicating attacked squares for each board
+        self.in_check_mask = None  # (B,) bool tensor from efficient generator
+        self.no_move_mask = None   # (B,) bool tensor indicating boards with no moves
+        self.legal_moves = None    # (B,) LegalMovesNew
+        self.features = None       # (B, 8, 8, 21) cached feature tensor
 
     def select(self, idx: torch.Tensor):
         """
         Select a subset of the cache based on the provided indices.
         """
         new_cache = BoardCache()
-        new_cache.check_info = self.check_info.select(idx).clone() if self.check_info else None
-        new_cache.pre_moves = self.pre_moves.select(idx).clone() if self.pre_moves else None
-        new_cache.legal_moves = self.legal_moves.select(idx).clone() if self.legal_moves else None
-        new_cache.attack_map = self.attack_map[idx].clone() if self.attack_map is not None else None
+        new_cache.in_check_mask = self.in_check_mask[idx].clone() if self.in_check_mask is not None else None
+        new_cache.no_move_mask = self.no_move_mask[idx].clone() if self.no_move_mask is not None else None
+        new_cache.legal_moves = self.legal_moves.select(idx).clone() if self.legal_moves is not None else None
+        if self.features is not None:
+            new_cache.features = self.features[idx].clone()
         return new_cache
 
-class TorchBoard(
-        # PseudoMoveGenerator, 
-        # PseudoMoveGeneratorNew, 
-        GetMoves,
-        InCheck, 
-        ToChessBoard, 
-        PushMoves, 
-        FeatureTensor, 
-        StoppingCondition
-    ):
-    def __init__(self, board_tensor: torch.Tensor, state: GameState, device = torch.device("cuda"), compute_cache: bool = True):
+class TorchBoard(GetMoves, ToChessBoard, PushMoves, StoppingCondition):
+    def __init__(self, board_tensor: torch.Tensor, state: GameState, device = torch.device("cuda"), compute_cache: bool = False):
         assert isinstance(board_tensor, torch.Tensor), "board_tensor must be a torch.Tensor"
         assert board_tensor.shape[-2:] == (8, 8), "boards must be shape (B, 8, 8)"
 
@@ -62,9 +50,7 @@ class TorchBoard(
 
         self.board_tensor = board_tensor.to(self.device)
         self.state = state
-        if compute_cache:
-            self.cache = BoardCache()
-            self.cache.check_info = self.compute_check_info()
+        self.cache = BoardCache()
 
     @classmethod
     def from_board_list(cls, boards, device = torch.device("cuda")):
@@ -81,12 +67,9 @@ class TorchBoard(
         # castling_str = self.state.castling.tolist() if bsz < 10 else f"<{bsz} values>"
         cache_fields = []
         if hasattr(self, "cache") and self.cache:
-            for field in ["check_info", "pre_moves", "legal_moves", "attack_map"]:
+            for field in ["in_check_mask", "no_move_mask", "features"]:
                 value = getattr(self.cache, field, None)
-                if value is not None:
-                    cache_fields.append(f"{field}=yes")
-                else:
-                    cache_fields.append(f"{field}=no")
+                cache_fields.append(f"{field}={'yes' if value is not None else 'no'}")
             cache_str = ", ".join(cache_fields)
         else:
             cache_str = "no cache"
@@ -104,15 +87,6 @@ class TorchBoard(
         new_state = self.state.cat(other.state)
         
         return TorchBoard(new_board_tensor, new_state, device=self.device)
-    
-    def _get_check_info(self):
-        if self.cache.check_info is None:
-            self.cache.check_info = self.compute_check_info(self)
-        return self.cache.check_info
-
-    @property
-    def in_check(self):
-        return self._get_check_info().in_check
     
     @property
     def side_to_move(self):
@@ -139,6 +113,14 @@ class TorchBoard(
         """
         return self.board_tensor.shape[0]
 
+    @property
+    def in_check(self):
+        if self.cache.in_check_mask is None:
+            self.get_moves()
+        if self.cache.in_check_mask is None:
+            return torch.zeros((len(self), 1), dtype=torch.bool, device=self.device)
+        return self.cache.in_check_mask.view(-1, 1)
+
     def to(self, device: str):
         """
         Move all board tensors to the specified device, update dtype, and clear cached check info.
@@ -148,62 +130,31 @@ class TorchBoard(
         self.board_tensor = self.board_tensor.to(device=device)
         self.state = self.state.to(device=device)
 
-        self.cache.check_info = None
+        self.cache = BoardCache()
         return self
     
     @property
     def board_flat(self):
         return self.board_tensor.view(self.board_tensor.size(0), 64)
+
+    def feature_tensor(self):
+        if self.cache.features is None:
+            _, features = self.get_moves()
+            if self.cache is not None:
+                self.cache.features = features
+            return features
+        return self.cache.features
     
     # ------------------------------------------------------------------
     # Pre-moves -> Legal moves conversion
     # ------------------------------------------------------------------
 
-    def filter_legal_moves_from_cache(self):
-        premoves = self.cache.pre_moves.clone()
-        if self.cache.check_info is None:
-            self.cache.check_info = self.compute_check_info()
-        premoves.filter_by_pin(self.cache.check_info.pin_data)
-        premoves.filter_by_check(self.cache.check_info.check_data)
-        attack_map = self.kings_disallowed_squares()
-        premoves.filter_king_by_attacks(attack_map)
-        premoves.filter_empty()
-
-        return LegalMoves.from_premoves(premoves, len(self)) # (B, L_max)
-    
-    def get_legal_moves(self, get_tensor: bool = False):
-        if not hasattr(self, "cache"):
-            self.cache = BoardCache()
-            self.cache.check_info = self.compute_check_info()
-
-        if self.cache.legal_moves:
-            if get_tensor and self.cache.legal_moves.tensor is None:
-                self.cache.legal_moves.get_tensor(self.board_flat)
-            return self.cache.legal_moves
-
-        if self.cache.pre_moves is None:
-            self.get_pre_moves()
-        
-        self.cache.legal_moves = self.filter_legal_moves_from_cache()
-        if get_tensor:
-            self.cache.legal_moves.get_tensor(self.board_flat)
-        return self.cache.legal_moves
-    
-    def get_legal_moves_new(self):
-        premoves, in_check = self.get_moves() # PreMoves
-        return premoves, in_check, LegalMoves.from_premoves(premoves, len(self))  # Update board_tensor and state
-
-    def get_legal_moves_fused(self, return_features: bool = False):
-        """Return legal moves (and optional feature tensor) via the fused kernel."""
-        # legal_moves, feature_tensor = self.get_moves_fused()
-        # if return_features:
-        #     return legal_moves, feature_tensor
-        return self.get_moves_fused()
-    
-    def get_topk_legal_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
-        lm = self.get_legal_moves(get_tensor=True)  # LegalMoves
-        return lm.rank_moves(move_pred, ks, sample=sample, temp=temp, generator=generator)
-    
+    def rank_moves(self, move_pred, ks, sample=False, temp=1.0, generator=None):
+        lm = self.cache.legal_moves
+        if lm is None:
+            lm, _ = self.get_moves()
+            self.cache.legal_moves = lm
+        return lm.rank_moves(move_pred, ks, sample, temp, generator)
     # ------------------------------------------------------------------
     # Clone and select
     # ------------------------------------------------------------------

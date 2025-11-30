@@ -83,13 +83,13 @@ class LegalMovesNew:
         Returns:
             move_logits: A tensor of shape (B, L_max) with logits for each legal move.
         """    
-        assert move_pred.shape[0] == self.encoded.shape[0], f"move_pred batch size ({move_pred.shape[0]}) must match legal moves batch size ({self.tensor.shape[0]})"
+        assert move_pred.shape[0] == self.encoded.shape[0], f"move_pred batch size ({move_pred.shape[0]}) must match legal moves batch size ({self.encoded.shape[0]})"
 
         B, L, S = self.sq_changes.shape
         b_idx = torch.arange(B, device=move_pred.device).view(-1, 1, 1).expand(-1, L, S)  # (B, L, S)
 
         sq = self.sq_changes.clamp_min(0).long()                    # (B, L, 4)
-        lab = self.label_changes.clamp_min(0)                       # (B, L, 4)
+        lab = self.label_changes.clamp_min(0).long()                # (B, L, 4)
 
         valid = (self.sq_changes >= 0) & self.mask.unsqueeze(-1)    # (B, L, 4)
 
@@ -145,7 +145,7 @@ class LegalMovesNew:
 
         selected_moves = top_lm[b_idx, m_idx]                     # (N_k,)
 
-        return selected_moves, b_idx, m_idx
+        return selected_moves, b_idx, m_idx, ks
     
     def sample_k(self, logits, ks, temp=1.0, generator=None):
         """

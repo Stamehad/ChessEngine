@@ -83,12 +83,9 @@ if __name__ == "__main__":
     move_time = 0.0
     for step in tqdm(range(MOVES), desc="Generating moves"):
         time_start = time.time()
-        lm = torch_boards.get_legal_moves()              # LegalMoves
-        lm, lm_mask = lm.encoded, lm.mask                # (B, L_max), (B, L_max)
-        lm_tensor = torch_boards.get_legal_move_tensor() # (B, 64, L_max), (B, L_max)
-        x = torch_boards.feature_tensor().float()        # (B, 8, 8, 21)
-
-        lm_one_hot = masked_one_hot(lm_tensor.long(), num_classes=7, mask_value=-100)  # (B, 64, L_max, 7)
+        legal_moves, features = torch_boards.get_moves()
+        lm_mask = legal_moves.mask
+        x = features.float()        # (B, 8, 8, 21)
         end_time = time.time()
         move_time += end_time - time_start
         #---------------------------------------
@@ -100,13 +97,7 @@ if __name__ == "__main__":
             x_out = x_out.detach()  # Detach to avoid gradients
             move_pred = move_pred.detach()  # Detach to avoid gradients
         
-        move_pred = move_pred.unsqueeze(2)  # (B, 64, 1, 7)
-        move_logits = (move_pred * lm_one_hot).sum(dim=-1)  # (B, 64, L)
-
-        # Average over changed squares
-        mask = (lm_tensor != -100)  # (B, 64, L)
-        move_logits = move_logits.sum(dim=1) / mask.sum(dim=1).clamp(min=1)  # (B, L)
-        move_logits = move_logits.masked_fill(~lm_mask, float('-inf'))
+        move_logits = legal_moves.get_logits(move_pred)
 
         end_time = time.time()
         inference_time += end_time - time_start
@@ -116,10 +107,9 @@ if __name__ == "__main__":
         # choose most likely move
         start_time = time.time()
         m_idx = move_logits.argmax(dim=1).long() # (B,)
-        b_idx = torch.arange(m_idx.shape[0], dtype=torch.long)  # batch indices
+        b_idx = torch.arange(m_idx.shape[0], dtype=torch.long, device=m_idx.device)  # batch indices
 
-        lm = lm.to(torch.int64)
-        moves = lm[b_idx, m_idx]  # (B, 64) → (B,)
+        moves = legal_moves.encoded[b_idx, m_idx]
 
         #-----------------------------------------
         # push moves

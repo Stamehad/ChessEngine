@@ -58,7 +58,7 @@ if __name__ == "__main__":
     # Simulate random operations
     with profiler.time_block("full_run"):
         for i in range(STEPS):
-            lm = boards.get_legal_moves()
+            lm, _ = boards.get_moves()
             is_terminal, result = boards.is_game_over()
             if is_terminal.any():    
                 boards = boards[~is_terminal]

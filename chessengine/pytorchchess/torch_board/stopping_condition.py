@@ -76,13 +76,34 @@ class StoppingCondition:
     
     def _check_standard_termination(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Check for checkmate and stalemate."""
-        lm = self.get_legal_moves()
-        no_moves = lm.get_terminal_boards()  # (B,) bool tensor
-        
-        if not no_moves.any():
-            return no_moves, torch.empty(0, dtype=torch.long, device=self.device)
-        
-        in_check = self.in_check  # (B,)
+        cache = getattr(self, "cache", None)
+        legal_moves = None
+
+        no_moves = cache.no_move_mask if cache is not None else None
+        if no_moves is None:
+            legal_moves, _ = self.get_moves()
+            cache = getattr(self, "cache", None)
+            if cache is not None and cache.no_move_mask is not None:
+                no_moves = cache.no_move_mask
+            elif legal_moves is not None:
+                no_moves = ~legal_moves.mask.any(dim=-1)
+                if cache is not None:
+                    cache.no_move_mask = no_moves
+
+        if no_moves is None or not no_moves.any():
+            empty = torch.empty(0, dtype=torch.long, device=self.device)
+            return no_moves if no_moves is not None else torch.zeros(len(self), dtype=torch.bool, device=self.device), empty
+
+        in_check = cache.in_check_mask if cache is not None else None
+        if in_check is None:
+            # Fallback to full recomputation or cached check info
+            _, _ = self.get_moves()
+            cache = getattr(self, "cache", None)
+            in_check = cache.in_check_mask if cache is not None else None
+        if in_check is None:
+            in_check = self.in_check.view(-1)
+        else:
+            in_check = in_check.view(-1)
         
         # Calculate results for terminal positions
         # 1 = white win, 0 = draw, -1 = black win
