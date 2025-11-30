@@ -74,7 +74,7 @@ class InitialStates:
         topk: int,
     ) -> List[Tuple[float, str]]:
         tb = TorchBoard.from_board_list(board, device=device)
-        legal_moves, features = tb.get_legal_moves_fused(return_features=True)
+        legal_moves, features = tb.get_moves()
         mask = legal_moves.mask[0]
         if not mask.any():
             return []

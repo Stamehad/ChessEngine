@@ -270,7 +270,8 @@ class SelfPlayEngine:
 
         with self.profiler.section("model"):
             if len(self.beam_state) > 0:
-                features = self.beam_boards.cache.features.float()
+                print(self.beam_boards.cache.features.device)
+                features = self.beam_boards.cache.features.to(self.device).float()
                 scalar_eval, move_pred = self._evaluate_positions(features)
 
         with self.profiler.section("bookkeeping"):
@@ -336,6 +337,9 @@ class SelfPlayEngine:
         """Run the chess network on the prepared feature tensor."""
         with torch.no_grad():
             x_out, move_pred = self.model(features)
+            assert x_out.device == features.device, f"x_out on {x_out.device}"
+            head = self.model.loss_module.prob_eval_loss.head
+            assert head.parameters().device == features.device, f"head on {head.device}"
             eval_logits = self.model.loss_module.prob_eval_loss.head(x_out)
             prob_eval = F.softmax(eval_logits, dim=-1)
             scalar_eval = prob_eval[:, 0] - prob_eval[:, 2]

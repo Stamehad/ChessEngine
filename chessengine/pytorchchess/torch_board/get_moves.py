@@ -55,6 +55,9 @@ class GetMoves:
         device  = board.device
         B       = board.size(0)
 
+        if self.board_tensor.device.type != self.device.type:
+            raise RuntimeError("Board tensor on different device than TorchBoard.device")
+
         # ------------------------------------------------------------------
         # 0) Geometric moves for all pieces
         # ------------------------------------------------------------------
@@ -408,11 +411,18 @@ class GetMoves:
         # ------------------------------------------------------------------
         # 10) Package results
         # ------------------------------------------------------------------
-        encoded = lm16.squeeze(-1).to(move_dtype(device))                # (B, L_max)
-        mask = encoded != -1                                             # (B, L_max)
-        legal_moves = LegalMovesNew(encoded=encoded, mask=mask, sq_changes=sq_changes, label_changes=label_changes)
+        encoded = lm16.squeeze(-1).to(move_dtype(self.device))                # (B, L_max)
+        mask = encoded != -1                                                 # (B, L_max)
+        sq_changes = sq_changes.to(self.device)
+        label_changes = label_changes.to(self.device)
+        legal_moves = LegalMovesNew(
+            encoded=encoded,
+            mask=mask,
+            sq_changes=sq_changes,
+            label_changes=label_changes,
+        )
 
-        feature_tensor = x.view(B, 8, 8, 21).contiguous()
+        feature_tensor = x.view(B, 8, 8, 21).contiguous().to(self.device)
 
         no_moves = ~mask.any(dim=-1)                                     # (B,)
         if hasattr(self, "cache") and self.cache is not None:
@@ -420,5 +430,6 @@ class GetMoves:
             self.cache.no_move_mask = no_moves.clone()
             self.cache.legal_moves = legal_moves.clone()
             self.cache.features = feature_tensor.clone()
+            print("Cached features on", self.cache.features.device)
 
         return legal_moves, feature_tensor
