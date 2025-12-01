@@ -4,7 +4,7 @@ import yaml
 from dotenv import load_dotenv
 
 from chessengine.rl.initial_state_sampler import InitialStateSampler
-from chessengine.pytorchchess.beam_search.self_play import SelfPlayEngine
+from chessengine.pytorchchess.beam_search.self_play import SelfPlayEngine, SelfPlayProfiler
 from pytorchchess import TorchBoard
 from torch.profiler import profile, ProfilerActivity
 
@@ -33,7 +33,8 @@ def main(
 
     tb = TorchBoard.from_board_list(boards, device=device)
     model = load_real_model(device) if use_real_model else DummyModel().to(device)
-    engine = SelfPlayEngine(model, expansion_factors, device=device)
+    profiler = SelfPlayProfiler(enabled=True)
+    engine = SelfPlayEngine(model, expansion_factors, device=device, profiler=profiler)
     engine.initialize(tb)
 
     with profile(
@@ -48,6 +49,7 @@ def main(
                 prof.step()
 
     print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+    print(profiler.summary())
     return engine.sample_buffer.batch, prof
 
 
@@ -93,6 +95,7 @@ def load_real_model(device: torch.device):
 
     with open("engine_config.yaml", "r") as cfg_file:
         config = yaml.safe_load(cfg_file)
+        config["rl"] = True
 
     model = ChessLightningModule.load_from_checkpoint(checkpoint, config=config)
     model.eval().to(device)
@@ -101,9 +104,11 @@ def load_real_model(device: torch.device):
 
 if __name__ == "__main__":
     expansion = torch.tensor([3, 2, 1], dtype=torch.long)
+    G = 2
+    n_games = G * (expansion.numel() + 1)
     sampler_cfg = {
         "prefetch": 2,
-        "n_games": 1, # 64,
+        "n_games": n_games,
         "positions_per_game": 1,
         "max_ply": 30,
         "database_dir": "data/shards300_small/",
@@ -111,10 +116,10 @@ if __name__ == "__main__":
     batch, prof = main(
         device=torch.device("cpu"),
         expansion_factors=expansion,
-        games=1,
+        games=G,
         sampler_cfg=sampler_cfg,
         use_real_model=False,
-        max_steps=200,
+        max_steps=10,
         profile_steps=50,
     )
     print("Generated batch with", batch.features.shape[0], "samples")

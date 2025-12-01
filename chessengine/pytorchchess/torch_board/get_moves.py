@@ -411,10 +411,10 @@ class GetMoves:
         # ------------------------------------------------------------------
         # 10) Package results
         # ------------------------------------------------------------------
-        encoded = lm16.squeeze(-1).to(move_dtype(self.device))                # (B, L_max)
+        encoded = lm16.squeeze(-1)                # (B, L_max)
         mask = encoded != -1                                                 # (B, L_max)
-        sq_changes = sq_changes.to(self.device)
-        label_changes = label_changes.to(self.device)
+        sq_changes = sq_changes
+        label_changes = label_changes
         legal_moves = LegalMovesNew(
             encoded=encoded,
             mask=mask,
@@ -422,7 +422,7 @@ class GetMoves:
             label_changes=label_changes,
         )
 
-        feature_tensor = x.view(B, 8, 8, 21).contiguous().to(self.device)
+        feature_tensor = x.view(B, 8, 8, 21).contiguous()
 
         no_moves = ~mask.any(dim=-1)                                     # (B,)
         if hasattr(self, "cache") and self.cache is not None:
@@ -430,6 +430,5 @@ class GetMoves:
             self.cache.no_move_mask = no_moves.clone()
             self.cache.legal_moves = legal_moves.clone()
             self.cache.features = feature_tensor.clone()
-            print("Cached features on", self.cache.features.device)
 
         return legal_moves, feature_tensor

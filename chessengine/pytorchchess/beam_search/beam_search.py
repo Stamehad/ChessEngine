@@ -343,7 +343,7 @@ class BeamSearchState:
         
         self.evaluations[layer] = self.EVAL_PAD  # Clear evaluations for this layer
         
-        return pv_values, pv_moves, layer   # (G,), (G,D), 
+        return pv_values, pv_moves, layer   # (G,), (G,D), int
     
     #==========================================================================
     # Utility methods
@@ -403,9 +403,9 @@ class BeamSearchState:
             current_side = ~current_side.squeeze(-1)  # Remove one dimension and flip
 
         # Unravel the PV path to get indices for each depth
-        pv_indices = self._unravel_pv_path(best_idx)
+        pv_idx = self._unravel_pv_path(best_idx)
         
-        return evals, pv_indices  # (G,), (G, D)
+        return evals, pv_idx  # (G,), (G,)
 
     def _unravel_pv_path(self, best_idx):
         """
@@ -420,7 +420,7 @@ class BeamSearchState:
               - best_idx[-1]: (G,)
               
         Returns: 
-            pv_idx: (G, D) tensor, so that pv_idx[i] = (i0, ..., iD-1) is the PV for game i.
+            pv_idx: (G,) tensor, so that pv_idx[i] is a flat index to in k0 * k1 * ... * kD-1 for game i.
         """
         D = len(best_idx)
         pv_idx = torch.zeros((self.G, D), dtype=torch.long, device=best_idx[-1].device) # (G, D)
